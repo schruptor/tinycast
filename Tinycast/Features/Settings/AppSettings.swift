@@ -150,6 +150,20 @@ final class AppSettings {
     }
 
     /// What ↵ does on a clipboard entry; Paste takes the chord the chosen action leaves free.
+    var clipboardPreferPlainText: Bool {
+        didSet { defaults.set(clipboardPreferPlainText, forKey: Key.clipboardPreferPlainText.rawValue) }
+    }
+
+    var clipboardSequenceTimeout: ClipboardSequenceTimeout {
+        didSet {
+            defaults.set(clipboardSequenceTimeout.rawValue, forKey: Key.clipboardSequenceTimeout.rawValue)
+        }
+    }
+
+    var clipboardSequenceNewline: Bool {
+        didSet { defaults.set(clipboardSequenceNewline, forKey: Key.clipboardSequenceNewline.rawValue) }
+    }
+
     var clipboardDefaultAction: ClipboardDefaultAction {
         didSet {
             defaults.set(
@@ -597,6 +611,12 @@ final class AppSettings {
         clipboardDisabledApps =
             defaults.stringArray(forKey: Key.clipboardDisabledApps.rawValue)
             ?? ["com.apple.keychainaccess", "com.apple.Passwords"]
+        clipboardPreferPlainText = defaults.bool(forKey: Key.clipboardPreferPlainText.rawValue)
+        clipboardSequenceTimeout =
+            ClipboardSequenceTimeout(
+                rawValue: defaults.integer(forKey: Key.clipboardSequenceTimeout.rawValue))
+            ?? .thirtySeconds
+        clipboardSequenceNewline = defaults.bool(forKey: Key.clipboardSequenceNewline.rawValue)
         clipboardDefaultAction =
             defaults.string(forKey: Key.clipboardDefaultAction.rawValue)
             .flatMap(ClipboardDefaultAction.init) ?? .paste

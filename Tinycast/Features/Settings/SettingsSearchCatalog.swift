@@ -474,6 +474,9 @@ enum SettingsSearchCatalog {
         .init(
             .clipboardHistory, "Default action",
             keywords: ["enter", "return", "paste", "copy", "primary"]),
+        .init(.clipboardHistory, "Prefer pasting as plain text"),
+        .init(.clipboardCommands, "Sequence Timeout"),
+        .init(.clipboardCommands, "Add a new line after pasting text"),
         .init(
             group: .clipboardDisabledApplications, "Disabled Applications",
             keywords: ["exclude", "password manager", "ignore", "privacy"]),

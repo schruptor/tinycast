@@ -30,6 +30,7 @@ struct PopoverMenuItem {
     var detail: String?
     /// Destructive rows (delete) tint their icon + label red, matching the native menu convention.
     var isDestructive: Bool = false
+    var submenu: PopoverMenuContent?
     let action: () -> Void
 
     /// What the keyboard and pointer may land on; a loading or disabled row only states itself.

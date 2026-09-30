@@ -31,6 +31,7 @@ struct RootPaletteView: View {
     @FocusState private var argumentFocused: String?
     /// Which in-window menu is open; at most one, so the state cannot disagree with itself.
     @State private var openMenu: OpenMenu?
+    @State private var actionSubmenu: PopoverMenuContent?
     /// Sampled once by `openActions`, so the running-only rows can't appear while the menu is up.
     @State private var selectionIsRunning = false
     /// Highlighted row of whichever menu is open; each open path sets where it starts.
@@ -218,6 +219,13 @@ struct RootPaletteView: View {
 
     /// The one source every menu path addresses rows through, so none can disagree.
     private var menuContent: PaletteMenuContent? {
+        if let actionSubmenu {
+            let filtered = actionSubmenu.matching(ActionMenuSearchQuery(vm.menuQuery))
+            return PaletteMenuContent(
+                popover: filtered.content, selection: $menuSelection,
+                search: PopoverMenu.Search(placeholder: "Search for formats…", placement: .bottom),
+                onActivate: activateMenuItem, preferredSelection: filtered.bestMatch)
+        }
         switch openMenu {
         case .actions:
             let screen = screen
@@ -443,6 +451,7 @@ struct RootPaletteView: View {
             }
             // The hosted tree is its own hierarchy, so the highlight has to be pushed into it.
             .onChange(of: menuSelection) { syncMenuPanel(presenting: false) }
+            .onChange(of: actionSubmenu != nil) { syncMenuPanel(presenting: false) }
             .onChange(of: vm.menuQuery) { menuQueryChanged() }
             .onDisappear {
                 menuPanel.hide()
@@ -1059,6 +1068,7 @@ struct RootPaletteView: View {
 
     /// Every open path lands here, so the highlight is always stated rather than left behind.
     private func open(_ menu: OpenMenu, highlighting row: Int) {
+        actionSubmenu = nil
         vm.menuQuery = ""
         menuSelection = row
         vm.noteMenuPresentation()
@@ -1067,6 +1077,7 @@ struct RootPaletteView: View {
     }
 
     private func closeMenus() {
+        actionSubmenu = nil
         menuPanel.hide()
         openMenu = nil
         argumentOptionsField = nil
@@ -1174,6 +1185,11 @@ struct RootPaletteView: View {
     }
 
     private func escapeMenu() {
+        if actionSubmenu != nil, vm.menuQuery.isEmpty {
+            actionSubmenu = nil
+            menuSelection = 0
+            return
+        }
         if vm.menuQuery.isEmpty {
             closeMenus()
         } else {
@@ -1290,6 +1306,12 @@ struct RootPaletteView: View {
     private func activateMenuItem(_ index: Int) {
         guard let content = menuContent, (0..<content.rowCount).contains(index) else { return }
         guard content.isSelectable(index) else { return }
+        if let submenu = content.submenu?(index) {
+            actionSubmenu = submenu
+            vm.menuQuery = ""
+            menuSelection = 0
+            return
+        }
         // Before the action: one opening a window must find the palette key again, or nothing hides it.
         closeMenus()
         // A mouse click on a row takes the caret with it; menus close back into the field.

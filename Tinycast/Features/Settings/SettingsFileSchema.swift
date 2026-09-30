@@ -92,6 +92,9 @@ enum SettingsFileSchema {
         case .windowRooms: return windowManagement.roomsBinding(for: key)
         case .clipboardEnabled: return bind(settings, \.clipboardEnabled)
         case .clipboardRetention: return bind(settings, \.clipboardRetention)
+        case .clipboardPreferPlainText: return bind(settings, \.clipboardPreferPlainText)
+        case .clipboardSequenceTimeout: return bind(settings, \.clipboardSequenceTimeout)
+        case .clipboardSequenceNewline: return bind(settings, \.clipboardSequenceNewline)
         case .clipboardDefaultAction: return bind(settings, \.clipboardDefaultAction)
         case .clipboardDisabledApps: return bind(settings, \.clipboardDisabledApps)
         case .emojiSkinTone: return bind(settings, \.emojiSkinTone)
@@ -128,6 +131,7 @@ extension CalcNumberStyle: SettingsFileRawValue {}
 extension SearchSensitivity: SettingsFileRawValue {}
 extension QuicklinkSelectionFallback: SettingsFileRawValue {}
 extension WindowCycle: SettingsFileRawValue {}
+extension ClipboardSequenceTimeout: SettingsFileRawValue {}
 extension ClipboardDefaultAction: SettingsFileRawValue {}
 extension EmojiSkinTone: SettingsFileRawValue {}
 extension EmojiGridColumns: SettingsFileRawValue {}

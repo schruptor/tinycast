@@ -44,6 +44,10 @@ struct ClipboardScreen: PaletteScreen {
         case .deleteAll:
             deleteAll()
             return true
+        case .rename:
+            guard let item = item(at: selection) else { return false }
+            core.clipboardCoordinator.renameEntry(item)
+            return true
         case .pin: return pin(at: selection)
         case .favoriteSlot(let index): return activatePinned(at: index)
         case .copyText:
@@ -137,10 +141,10 @@ struct ClipboardScreen: PaletteScreen {
                     results: rows,
                     selectedID: selected?.id,
                     scroll: scroll,
-                    onSelect: { item in vm.selection = rows.firstIndex(of: item) ?? 0 },
+                    onSelect: { item in vm.selection = rows.firstIndex { $0.id == item.id } ?? 0 },
                     onActivate: { activate(at: vm.selection) },
                     onActions: { item in
-                        if let index = rows.firstIndex(of: item) { vm.selection = index }
+                        if let index = rows.firstIndex(where: { $0.id == item.id }) { vm.selection = index }
                         openActions()
                     },
                     onDragPayload: { core.clipboardCoordinator.dragPayload(for: $0) },
@@ -186,6 +190,29 @@ enum ClipboardActionsMenu {
                 shortcut: "⌥↵"
             ) {
                 core.clipboardCoordinator.pasteKeepingWindowOpen(item)
+            })
+        let modes = ClipboardPasteMode.available(for: item)
+        if modes.count > 1 {
+            var pasteAs = PopoverMenuItem(title: "Paste as…", systemImage: "doc.richtext") {}
+            pasteAs.detail = "›"
+            pasteAs.submenu = PopoverMenuContent(
+                header: "Paste as…",
+                items: modes.map { mode in
+                    PopoverMenuItem(title: mode.title, systemImage: "doc.on.clipboard") {
+                        core.clipboardCoordinator.paste(item, mode: mode)
+                    }
+                })
+            items.insert(pasteAs, at: 1)
+        }
+        if item.kind == .text {
+            items.append(
+                PopoverMenuItem(title: "Edit Content", systemImage: "pencil", startsSection: true) {
+                    core.clipboardCoordinator.editContent(item)
+                })
+        }
+        items.append(
+            PopoverMenuItem(title: "Rename Entry", systemImage: "character.cursor.ibeam", shortcut: "⌘E") {
+                core.clipboardCoordinator.renameEntry(item)
             })
         if item.isPinned {
             items.append(
@@ -258,6 +285,7 @@ enum ClipboardActionsMenu {
     }
 
     private static func headerText(_ item: ClipboardItem) -> String {
+        if let name = item.customName { return name }
         switch item.kind {
         case .text:
             // Collapse whitespace so a multi-line copy stays a clean one-line title.

@@ -106,6 +106,16 @@ final class DialogController: NSObject, NSWindowDelegate {
         return state.values
     }
 
+    func editClipboardText(_ text: String, renaming: Bool) async -> String? {
+        let state = ClipboardEditorState(text: text, renaming: renaming)
+        let request = DialogRequest(
+            title: renaming ? "Rename Clipboard Entry" : "Edit Clipboard Entry",
+            symbol: nil, actions: [DialogAction(title: "Save"), DialogAction(title: "Cancel", role: .cancel)],
+            defaultIndex: 0, cancelIndex: 1, accessory: .clipboardText(state))
+        guard await present(request) == 0 else { return nil }
+        return state.text
+    }
+
     private func present(_ request: DialogRequest) async -> Int {
         // Keyed on the continuation, so a panel still fading can't swallow the next.
         guard continuation == nil else { return request.cancelIndex }
@@ -115,7 +125,7 @@ final class DialogController: NSObject, NSWindowDelegate {
             let width =
                 switch request.accessory {
                 case nil, .volume: metrics.size.dialogCompactWidth
-                case .eventDraft, .snippetArguments: metrics.size.dialogWidth
+                case .eventDraft, .snippetArguments, .clipboardText: metrics.size.dialogWidth
                 }
             let content = hostingView(
                 DialogView(
@@ -126,6 +136,9 @@ final class DialogController: NSObject, NSWindowDelegate {
                     }),
                 width: width, minHeight: 0)
             let panel = DialogPanel(content: content, cornerRadius: metrics.radius.panel)
+            if case .clipboardText(let state) = request.accessory {
+                panel.returnInsertsNewline = !state.renaming
+            }
             panel.handlesArrowKeys = request.accessory?.claimsArrowKeys ?? false
             panel.delegate = self
             panel.onKey = { [weak self] key in
@@ -169,6 +182,9 @@ final class DialogController: NSObject, NSWindowDelegate {
 
     /// A refused primary action leaves the dialog up, as a greyed-out button would.
     private static func accepts(_ index: Int, for request: DialogRequest) -> Bool {
+        if index == request.defaultIndex, case .clipboardText(let state) = request.accessory {
+            return state.isValid
+        }
         guard index == request.defaultIndex, case .eventDraft(let state) = request.accessory else {
             return true
         }

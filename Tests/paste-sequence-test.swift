@@ -16,6 +16,7 @@ struct PasteSequenceTests {
     static let history = [newest, image, middle, file, oldest]
 
     static func main() {
+        configuredSequence()
         walksEveryKindNewestFirst()
         stopsAtTheEndRatherThanWrapping()
         emptyHistoryHasNothingToPaste()
@@ -33,6 +34,30 @@ struct PasteSequenceTests {
 
         print("\(passes)/\(passes + failures) passed")
         if failures > 0 { exit(1) }
+    }
+
+    static func configuredSequence() {
+        let identity = UUID()
+        var sequence = PasteSequence(
+            entryIDs: ids(history), changeCount: 1, now: start, captureIdentity: identity)
+        expect(sequence.next(in: history)?.id == newest.id, "sequence starts at newest")
+        expect(sequence.next(in: history)?.id == image.id, "sequence advances")
+        expect(
+            sequence.continues(changeCount: 99, at: start, timeout: 5, captureIdentity: identity),
+            "other Tinycast writes do not reset the capture identity")
+        expect(
+            !sequence.continues(
+                changeCount: 1, at: start.addingTimeInterval(5), timeout: 5, captureIdentity: identity),
+            "configured timeout resets at the boundary")
+        expect(
+            !sequence.continues(changeCount: 1, at: start, timeout: 30, captureIdentity: UUID()),
+            "new external capture resets the sequence")
+        sequence = PasteSequence(
+            entryIDs: ids(history), changeCount: 1, now: start, captureIdentity: identity)
+        expect(sequence.next(in: history)?.id == newest.id, "explicit reset starts again at newest")
+        var missing = PasteSequence(entryIDs: ids([newest, middle, oldest]), changeCount: 1, now: start)
+        _ = missing.next(in: history)
+        expect(missing.next(in: [newest, oldest])?.id == oldest.id, "deleted next entry is skipped")
     }
 
     static func walksEveryKindNewestFirst() {

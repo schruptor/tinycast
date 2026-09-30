@@ -16,11 +16,12 @@ enum RaycastImportReader {
         backup.hotkeys = mapHotkeys(json)
         backup.favoriteApps = mapFavorites(json)
         backup.launcherAliases = mapAliases(json)
-        let (clipboard, missing) = mapClipboard(json)
+        let (clipboard, missing, representations) = mapClipboard(json)
         let snippets = RaycastSnippetImport.parse(
             (json["snippets"] as? [String: Any])?["snippets"])
         let quicklinks = RaycastQuicklinkImport.parse(json["quicklinks"])
         return RaycastImport.Result(
+            representations: representations,
             backup: backup,
             clipboard: clipboard,
             snippets: snippets,
@@ -198,17 +199,21 @@ enum RaycastImportReader {
 
     // MARK: - Clipboard
 
-    private static func mapClipboard(_ json: [String: Any]) -> (items: [ClipboardItem], missing: Int) {
+    private static func mapClipboard(
+        _ json: [String: Any]
+    ) -> (items: [ClipboardItem], missing: Int, representations: [UUID: [ClipboardRepresentation]]) {
         guard
             let entries = (json["clipboardHistory"] as? [String: Any])?["clipboardEntries"]
                 as? [[String: Any]]
-        else { return ([], 0) }
+        else { return ([], 0, [:]) }
 
         let dateParser = ISO8601DateFormatter()
         dateParser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
 
         var items: [ClipboardItem] = []
         var missing = 0
+        var representations: [UUID: [ClipboardRepresentation]] = [:]
+        var representationBytes = 0
         for entry in entries {
             let createdAt = parseDate(entry["createdAt"] as? String, using: dateParser) ?? Date()
             let reps = (entry["items"] as? [[String: Any]] ?? [])
@@ -217,10 +222,42 @@ enum RaycastImportReader {
             if let text = reps.first(where: {
                 ($0["mimeType"] as? String)?.hasPrefix("text/plain") == true
             })?["content"] as? String, !text.isEmpty {
+                let id = UUID()
+                let sourceItem = (entry["items"] as? [[String: Any]] ?? []).first { item in
+                    (item["representations"] as? [[String: Any]] ?? []).contains {
+                        ($0["mimeType"] as? String)?.hasPrefix("text/plain") == true
+                            && ($0["content"] as? String) == text
+                    }
+                }
+                let sourceReps = sourceItem?["representations"] as? [[String: Any]] ?? []
+                let original = ClipboardRepresentation.bounded(
+                    sourceReps.compactMap { representation in
+                        guard let mime = representation["mimeType"] as? String,
+                            let content = representation["content"] as? String,
+                            [nil, "string", "text"].contains(representation["contentType"] as? String),
+                            content.utf8.count <= ClipboardRepresentation.maximumBytes
+                        else { return nil }
+                        let type: String
+                        switch mime.split(separator: ";").first {
+                        case "text/plain": type = "public.utf8-plain-text"
+                        case "text/html": type = "public.html"
+                        case "text/rtf", "application/rtf": type = "public.rtf"
+                        default: return nil
+                        }
+                        return ClipboardRepresentation(type: type, data: Data(content.utf8))
+                    })
+                if representationBytes + original.reduce(0, { $0 + $1.data.count })
+                    <= ClipboardRepresentation.maximumStoredBytes
+                {
+                    representations[id] = original
+                    representationBytes += original.reduce(0) { $0 + $1.data.count }
+                }
                 items.append(
                     ClipboardItem(
-                        id: UUID(), kind: .text, text: text, imagePath: nil, createdAt: createdAt,
-                        sourceBundleID: nil))
+                        id: id, kind: .text, text: text, imagePath: nil,
+                        createdAt: createdAt, sourceBundleID: nil,
+                        customName: clipboardName(entry),
+                        representationTypes: (representations[id] ?? []).map(\.type)))
                 continue
             }
 
@@ -233,10 +270,18 @@ enum RaycastImportReader {
                     continue
                 }
                 items.append(
-                    ClipboardItem(imagePath: path, createdAt: createdAt, sourceBundleID: nil))
+                    ClipboardItem(
+                        id: UUID(), kind: .image, text: nil, imagePath: path,
+                        createdAt: createdAt, sourceBundleID: nil, customName: clipboardName(entry)))
             }
         }
-        return (items, missing)
+        return (items, missing, representations)
+    }
+
+    private static func clipboardName(_ entry: [String: Any]) -> String? {
+        guard let raw = (entry["customName"] ?? entry["title"]) as? String else { return nil }
+        let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !name.isEmpty && name.utf8.count <= 1024 ? name : nil
     }
 
     // MARK: - Helpers

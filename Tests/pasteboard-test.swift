@@ -10,7 +10,9 @@ struct PasteboardTests {
     static var passes = 0
     static let cap = ClipboardManager.maxCapturedFiles
 
-    static func main() {
+    static func main() async {
+        await offMainCaptureRead()
+        richFormatsRestore()
         finderCopyReadsAsAFileNotItsName()
         everyFileFlavourIsRead()
         multipleFilesReadNewestLast()
@@ -25,6 +27,102 @@ struct PasteboardTests {
 
         print("\(passes)/\(passes + failures) passed")
         if failures > 0 { exit(1) }
+    }
+
+    static func offMainCaptureRead() async {
+        let source = board()
+        let item = NSPasteboardItem()
+        item.setString("Background source", forType: .string)
+        item.setData(Data("<b>Background source</b>".utf8), forType: .html)
+        source.writeObjects([item])
+        let name = source.name.rawValue
+        let formats = await Task.detached {
+            ClipboardManager.representations(
+                on: NSPasteboard(name: .init(name)), matchingText: "Background source")
+        }.value
+        expect(formats.contains { $0.type == "public.html" }, "source representations can be read off-main")
+    }
+
+    static func richFormatsRestore() {
+        withScratch { directory in
+            let store = ClipboardStore(directory: directory)
+            let entry = store.addText("Hello", sourceBundleID: nil)
+            let source = board()
+            let payload = NSPasteboardItem()
+            payload.setString("Hello", forType: .string)
+            payload.setData(Data("<b>Hello</b>".utf8), forType: .html)
+            payload.setData(Data("{\\rtf1\\ansi\\b Hello\\b0}".utf8), forType: .rtf)
+            source.writeObjects([payload])
+            let formats = ClipboardManager.representations(on: source)
+            expect(
+                Set(formats.map(\.type))
+                    == Set([
+                        NSPasteboard.PasteboardType.string.rawValue,
+                        NSPasteboard.PasteboardType.html.rawValue, NSPasteboard.PasteboardType.rtf.rawValue
+                    ]),
+                "capture uses original types")
+            let secret = board()
+            let concealed = NSPasteboardItem()
+            concealed.setString("secret", forType: .string)
+            concealed.setData(Data("<b>secret</b>".utf8), forType: .html)
+            concealed.setData(Data(), forType: .init("org.nspasteboard.ConcealedType"))
+            secret.writeObjects([concealed])
+            expect(
+                ClipboardManager.representations(on: secret).isEmpty,
+                "secret markers reject every representation")
+            let restored = board()
+            expect(
+                Paster.write(entry, store: store, to: restored, representations: formats), "original restores"
+            )
+            for representation in formats {
+                expect(
+                    restored.data(forType: .init(representation.type)) == representation.data,
+                    "original bytes round trip")
+            }
+            if let data = restored.data(forType: .rtf),
+                let attributed = try? NSAttributedString(
+                    data: data,
+                    options: [.documentType: NSAttributedString.DocumentType.rtf], documentAttributes: nil)
+            {
+                expect(attributed.string == "Hello", "native RTF reader receives the original content")
+                let font = attributed.attribute(.font, at: 0, effectiveRange: nil) as? NSFont
+                expect(
+                    font.map { NSFontManager.shared.traits(of: $0).contains(.boldFontMask) } == true,
+                    "native RTF reader preserves bold formatting")
+            } else {
+                expect(false, "native RTF reader accepts restored rich data")
+            }
+            let rtfd = ClipboardRepresentation(
+                type: NSPasteboard.PasteboardType.rtfd.rawValue, data: Data("fixture".utf8))
+            expect(
+                Paster.write(
+                    entry, store: store, to: restored, mode: .richText, representations: formats + [rtfd]),
+                "RTFD rich choice restores")
+            expect(
+                restored.data(forType: .rtfd) == rtfd.data && restored.data(forType: .rtf) == nil,
+                "RTFD is preferred to retain embedded attachments")
+            expect(
+                Paster.write(entry, store: store, to: restored, mode: .plainText, representations: formats),
+                "plain restores")
+            expect(restored.string(forType: .string) == "Hello", "plain text is normalized content")
+            expect(
+                restored.data(forType: .html) == nil && restored.data(forType: .rtf) == nil,
+                "plain strips rich types")
+            expect(
+                Paster.write(entry, store: store, to: restored, mode: .html, representations: formats),
+                "HTML restores")
+            expect(
+                restored.string(forType: .html) == "<b>Hello</b>" && restored.data(forType: .rtf) == nil,
+                "HTML selects only original HTML")
+            expect(
+                Paster.write(entry, store: store, to: restored, mode: .richText, representations: formats),
+                "rich restores")
+            expect(
+                restored.data(forType: .rtf) != nil && restored.data(forType: .html) == nil,
+                "rich selects only original RTF")
+            expect(Paster.write(entry, store: store, to: restored), "old entry falls back")
+            expect(restored.string(forType: .string) == "Hello", "fallback restores plain content")
+        }
     }
 
     // MARK: - Reading

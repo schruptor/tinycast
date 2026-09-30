@@ -1,5 +1,6 @@
 // Standalone test for the clipboard store, compiling the real source rather than a copy.
 import Foundation
+import SQLite3
 
 @main
 @MainActor
@@ -7,7 +8,10 @@ struct ClipboardTests {
     static var failures = 0
     static var passes = 0
 
-    static func main() {
+    static func main() async {
+        await richClipboard()
+        await representationQuota()
+        oldDatabaseMigration()
         pinOrder()
         unpinRejoinsAsNewest()
         pasteLeavesPinsAlone()
@@ -37,6 +41,183 @@ struct ClipboardTests {
 
         print("\(passes)/\(passes + failures) passed")
         if failures > 0 { exit(1) }
+    }
+
+    static func richClipboard() async {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("rich-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ClipboardStore(directory: directory)
+        let item = store.addText("https://example.com/abc", sourceBundleID: "fixture")
+        let plain = ClipboardRepresentation(
+            type: "public.utf8-plain-text", data: Data("https://example.com/abc".utf8))
+        let html = ClipboardRepresentation(
+            type: "public.html", data: Data("<b>https://example.com/abc</b>".utf8))
+        let rtf = ClipboardRepresentation(type: "public.rtf", data: Data("{\\rtf1 Hello}".utf8))
+        for (formats, modes): ([ClipboardRepresentation], [ClipboardPasteMode]) in [
+            ([plain], [.original, .plainText]),
+            ([plain, html], [.original, .plainText, .html]),
+            ([plain, rtf], [.original, .plainText, .richText]),
+            ([plain, rtf, html], [.original, .plainText, .richText, .html])
+        ] {
+            store.captureRepresentations(formats, for: item)
+            await store.flushRepresentations()
+            let current = store.item(withID: item.id)!
+            expect(ClipboardPasteMode.available(for: current) == modes, "available source formats only")
+            expect(
+                ClipboardRepresentationStore.read(for: item.id, inDatabaseAt: store.dbURL) == formats,
+                "original bytes persist separately")
+            expect(current.text == item.text, "normalization remains unchanged")
+        }
+        expect(store.rename(item, to: "Production Dashboard"), "rename saves")
+        store.togglePinned(store.item(withID: item.id)!)
+        expect(store.search("production", filter: .all).first?.id == item.id, "FTS searches the custom name")
+        expect(store.search("example.com", filter: .all).first?.id == item.id, "FTS still searches content")
+        let stamp = store.item(withID: item.id)!.createdAt
+        let pin = store.item(withID: item.id)!.pinnedAt
+        expect(store.editContent(item, to: "Hello World"), "editing succeeds")
+        let edited = store.item(withID: item.id)!
+        expect(edited.id == item.id && edited.createdAt == stamp, "edit preserves identity and timestamp")
+        expect(
+            edited.isPinned && edited.pinnedAt == pin && edited.customName == "Production Dashboard",
+            "edit preserves metadata and pin")
+        expect(edited.textForm == .plain, "edit reclassifies a URL as text")
+        expect(edited.representationTypes.isEmpty, "edit invalidates rich metadata")
+        expect(
+            ClipboardRepresentationStore.read(for: item.id, inDatabaseAt: store.dbURL).isEmpty,
+            "edit deletes stale rich bytes")
+        expect(store.search("example.com", filter: .all).isEmpty, "edit removes old content from FTS")
+        expect(store.search("Hello", filter: .all).first?.id == item.id, "edit updates FTS")
+        store.close()
+        store.open()
+        store.load()
+        expect(store.items.first?.customName == "Production Dashboard", "name survives restart")
+        expect(store.items.first?.isPinned == true, "pin survives restart")
+        expect(store.rename(store.items[0], to: "  "), "empty rename saves")
+        expect(store.items[0].customName == nil, "empty rename removes name")
+        let giant = ClipboardRepresentation(
+            type: "public.html",
+            data: Data(repeating: 65, count: ClipboardRepresentation.maximumBytes + 1))
+        store.captureRepresentations([plain, giant], for: edited)
+        await store.flushRepresentations()
+        expect(
+            store.item(withID: item.id)?.representationTypes == [plain.type], "oversized rich data is dropped"
+        )
+        let duplicate = store.addText("Hello World", sourceBundleID: nil)
+        expect(
+            duplicate.id == edited.id && store.items.count == 1, "rich formats do not affect deduplication")
+        expect(
+            ClipboardRepresentation.bounded([giant, html]).count == 1, "oversized format does not block HTML")
+        expect(
+            ClipboardRepresentation.bounded([
+                ClipboardRepresentation(
+                    type: "public.file-url",
+                    data: Data("file:///tmp/export".utf8))
+            ]).isEmpty, "raw transient file references are excluded")
+        expect(
+            ClipboardPasteMode.preferred(for: edited, plainText: true) == .plainText,
+            "plain preference applies to text")
+        let image = ClipboardItem(imagePath: "/fixture.png", sourceBundleID: nil)
+        expect(
+            ClipboardPasteMode.preferred(for: image, plainText: true) == .original, "preference keeps images")
+        expect(
+            ClipboardPasteMode.appendsNewline(to: edited, enabled: true), "sequential text appends newline")
+        expect(!ClipboardPasteMode.appendsNewline(to: image, enabled: true), "image never appends newline")
+        expect(!ClipboardPasteMode.appendsNewline(to: edited, enabled: false), "newline defaults off")
+        expect(
+            store.item(withID: edited.id)?.text == "Hello World", "newline operation never edits the entry")
+        store.captureRepresentations([rtf], for: edited)
+        expect(store.editContent(edited, to: "Concurrent edit"), "edit succeeds during pending capture")
+        await store.flushRepresentations()
+        expect(
+            ClipboardRepresentationStore.read(for: edited.id, inDatabaseAt: store.dbURL).isEmpty,
+            "a pending capture cannot resurrect pre-edit rich content")
+        expect(
+            store.item(withID: edited.id)?.representationTypes.isEmpty == true,
+            "pending capture leaves plain metadata")
+        expect(
+            store.editContent(edited, to: "Hello World"), "edited content can change without changing its ID")
+        var sequence = PasteSequence(entryIDs: store.sequenceIDs(), changeCount: 1, now: Date())
+        expect(
+            sequence.next(resolve: { store.item(withID: $0) })?.text == "Hello World",
+            "sequence resolves edited content")
+    }
+
+    static func representationQuota() async {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("quota-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ClipboardStore(directory: directory)
+        let payload = Data(repeating: 65, count: ClipboardRepresentation.maximumBytes)
+        let representations = [
+            ClipboardRepresentation(type: "public.html", data: payload),
+            ClipboardRepresentation(type: "public.rtf", data: payload)
+        ]
+        let entries = (0..<70).map { ClipboardItem(text: "Quota entry \($0)", sourceBundleID: nil) }
+        expect(store.importEntries(entries) == 70, "quota fixture inserts all history rows")
+        let url = store.dbURL
+        let saved = await Task.detached {
+            entries.reduce(0) { total, item in
+                total
+                    + ClipboardRepresentationStore.write(representations, for: item.id, inDatabaseAt: url)
+                    .count
+            }
+        }.value
+        expect(saved == 128, "raw storage stops at exactly 32 MiB")
+        store.load()
+        expect(store.items.count == 70, "quota does not drop normalized entries")
+        expect(store.items.allSatisfy { $0.text != nil }, "normalized text remains usable after quota")
+        expect(
+            ClipboardRepresentationStore.read(for: entries.last!.id, inDatabaseAt: url).isEmpty,
+            "entries past quota fall back to normalized content")
+        store.remove(entries[0])
+        let types = await Task.detached {
+            ClipboardRepresentationStore.write(representations, for: entries.last!.id, inDatabaseAt: url)
+        }.value
+        expect(types.count == 2, "deleting an entry reclaims its representation budget")
+        store.addFiles(["/fixture/report.pdf"], sourceBundleID: nil)
+        let file = store.items[0]
+        expect(store.rename(file, to: "Production File"), "file references can be renamed")
+        expect(store.search("Production", filter: .file).first?.id == file.id, "file names are indexed")
+        let image = ClipboardItem(imagePath: "/fixture/shot.png", sourceBundleID: nil)
+        _ = store.importEntries([image])
+        expect(store.rename(image, to: "Production Screenshot"), "images can be renamed")
+        expect(store.search("Screenshot", filter: .image).first?.id == image.id, "image names are indexed")
+        expect(
+            store.item(withID: image.id)?.imagePath == image.imagePath,
+            "image rename preserves binary reference")
+    }
+
+    static func oldDatabaseMigration() {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("migration-\(UUID())")
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("clipboard.sqlite3")
+        var db: OpaquePointer?
+        sqlite3_open(url.path, &db)
+        let id = UUID()
+        let sql = """
+            CREATE TABLE items(id TEXT NOT NULL UNIQUE, kind TEXT NOT NULL, text TEXT,
+              image_path TEXT, created_at REAL NOT NULL, source_app TEXT, pinned_at REAL);
+            INSERT INTO items VALUES('\(id)', 'text', 'Legacy content', NULL, \(Date().timeIntervalSince1970), NULL, 1);
+            CREATE VIRTUAL TABLE items_fts USING fts5(text, content='items', content_rowid='rowid', tokenize='trigram');
+            INSERT INTO items_fts(items_fts) VALUES('rebuild');
+            """
+        expect(sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK, "old database fixture exists")
+        sqlite3_close(db)
+        let store = ClipboardStore(directory: directory)
+        store.load()
+        expect(store.items.count == 1 && store.items[0].id == id, "schema migration preserves history")
+        guard let item = store.items.first else { return }
+        expect(item.isPinned && item.plainText == "Legacy content", "legacy pin and paste content survive")
+        expect(
+            ClipboardPasteMode.available(for: item) == [.original, .plainText],
+            "legacy entries offer no artificial rich text")
+        expect(store.search("Legacy", filter: .all).first?.id == id, "migrated FTS is rebuilt")
+        expect(store.rename(item, to: "Legacy name"), "legacy entries can be renamed")
+        expect(store.editContent(item, to: "Updated content"), "legacy entries can be edited")
+        store.close()
+        store.open()
+        store.load()
+        expect(store.items.first?.text == "Updated content", "migration is idempotent")
     }
 
     // MARK: - Cases

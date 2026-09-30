@@ -23,6 +23,7 @@ struct RaycastImportOptions: OptionSet, Sendable {
 /// What a `.rayconfig` yields, before it reaches the app. See docs/features/raycast-import.md.
 enum RaycastImport {
     struct Result {
+        var representations: [UUID: [ClipboardRepresentation]] = [:]
         var backup: SettingsBackup
         var clipboard: [ClipboardItem]
         var snippets: [Snippet]
@@ -85,6 +86,7 @@ enum RaycastImport {
             if hasSettings { trimmed.settings = settings }
 
             return Result(
+                representations: keepClipboard ? representations : [:],
                 backup: trimmed,
                 clipboard: keepClipboard ? clipboard : [],
                 snippets: options.contains(.snippets) ? snippets : [],

@@ -143,7 +143,10 @@ run apple-shortcut-test    Tinycast/Features/AppleShortcuts/Model/*.swift
 run calc-test              Tinycast/Features/Calculator/Model/*.swift
 run index calc-performance Tinycast/Features/Calculator/Model/*.swift
 run calendar-test          Tinycast/Features/Calendar/Model/*.swift
-run clipboard-test         Tinycast/Features/Clipboard/Model/ClipboardStore.swift \
+run clipboard-test         Tinycast/Features/Clipboard/Model/PasteSequence.swift \
+                           Tinycast/Features/Clipboard/Model/ClipboardStore.swift \
+                           Tinycast/Features/Clipboard/Model/ClipboardRepresentation.swift \
+                           Tinycast/Features/Clipboard/Model/ClipboardRepresentationStore.swift \
                            Tinycast/Features/Clipboard/Model/ClipboardFilter.swift \
                            Tinycast/Features/Clipboard/Model/ClipboardFileKind.swift \
                            Tinycast/Features/Clipboard/Model/ColorValue.swift \
@@ -160,6 +163,8 @@ run clipboard-text-test    Tinycast/Features/Clipboard/Model/*.swift $Q \
                            Tinycast/Platform/ProcessExit.swift
 run pasteboard-test        Tinycast/Platform/PasteboardFiles.swift \
                            Tinycast/Features/Clipboard/Model/ClipboardStore.swift \
+                           Tinycast/Features/Clipboard/Model/ClipboardRepresentation.swift \
+                           Tinycast/Features/Clipboard/Model/ClipboardRepresentationStore.swift \
                            Tinycast/Features/Clipboard/Model/ClipboardFilter.swift \
                            Tinycast/Features/Clipboard/Model/ClipboardFileKind.swift \
                            Tinycast/Features/Clipboard/Model/ColorValue.swift \
@@ -170,6 +175,8 @@ run pasteboard-test        Tinycast/Platform/PasteboardFiles.swift \
 run index clipboard-file-performance \
                            Tinycast/Platform/PasteboardFiles.swift \
                            Tinycast/Features/Clipboard/Model/ClipboardStore.swift \
+                           Tinycast/Features/Clipboard/Model/ClipboardRepresentation.swift \
+                           Tinycast/Features/Clipboard/Model/ClipboardRepresentationStore.swift \
                            Tinycast/Features/Clipboard/Model/ClipboardFilter.swift \
                            Tinycast/Features/Clipboard/Model/ClipboardFileKind.swift \
                            Tinycast/Features/Clipboard/Model/ColorValue.swift \
@@ -219,6 +226,8 @@ run hover-arming-test      Tinycast/Palette/HoverArming.swift \
                            Tinycast/Palette/PaletteMode.swift \
                            Tinycast/Features/Emoji/Model/EmojiCatalog.swift \
                            Tinycast/Features/Clipboard/Model/ClipboardStore.swift \
+                           Tinycast/Features/Clipboard/Model/ClipboardRepresentation.swift \
+                           Tinycast/Features/Clipboard/Model/ClipboardRepresentationStore.swift \
                            Tinycast/Features/Clipboard/Model/ClipboardFilter.swift \
                            Tinycast/Features/Clipboard/Model/ClipboardFileKind.swift \
                            Tinycast/Features/FileSearch/Model/FileSearchFilter.swift \
@@ -240,6 +249,8 @@ run palette-navigation-test Tinycast/Palette/PaletteState.swift \
                            Tinycast/Palette/HoverArming.swift \
                            Tinycast/Features/Emoji/Model/EmojiCatalog.swift \
                            Tinycast/Features/Clipboard/Model/ClipboardStore.swift \
+                           Tinycast/Features/Clipboard/Model/ClipboardRepresentation.swift \
+                           Tinycast/Features/Clipboard/Model/ClipboardRepresentationStore.swift \
                            Tinycast/Features/Clipboard/Model/ClipboardFilter.swift \
                            Tinycast/Features/Clipboard/Model/ClipboardFileKind.swift \
                            Tinycast/Features/FileSearch/Model/FileSearchFilter.swift \

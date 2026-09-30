@@ -22,12 +22,11 @@
 - **Paste Sequentially never promotes, and its walk is frozen at the first press.** `PasteSequence`
   keeps every entry's id, newest first, and resolves each against the live history, so a promotion
   cannot repeat or skip an entry and a deleted one is passed over rather than pasted.
-- **`Model/ClipboardStore.swift` keeps to Foundation plus SQLite3 and no other app source**, so
-  `clipboard-test` can compile it standalone. It uses `isolated deinit` for its SQLite teardown.
-- A database that cannot be opened is deleted and recreated. That is sound because a history is
-  captured rather than authored, and there is no UI for an unavailable clipboard — `QuicklinkStore`
-  deliberately does the opposite. It is **not** a licence to treat the file as disposable: it lives in
-  Application Support precisely because nothing else can put it back.
+- **The clipboard models keep to Foundation plus SQLite3.** The harness compiles the shipped store,
+  representation policy and representation storage; SQLite teardown uses `isolated deinit`.
+- **An unavailable database is kept on disk.** Schema migration runs transactionally; an open or
+  migration failure never deletes the reader's history. The closed store remains unavailable until
+  it can reopen.
 - **A link or an address is derived from the text, never persisted.** `ClipboardItem.Kind` holds
   only what capture can tell apart on the pasteboard — `text`, `image`, `file` — so improving the
   *classifier* stays a code change rather than a database migration plus a backfill, while a new
@@ -97,8 +96,11 @@ are mirrored in the observable `items` window; FTS search reaches older rows.
 may reclaim it at any time without telling the app, so a history kept there survives neither a restore
 nor a full disk — while the retention setting offers **Forever** and a pin is an explicit act.
 
-A database that won't open is deleted and recreated (worst case the store degrades to session-only
-in-memory history).
+A database that cannot open stays on disk; capture can still hold session entries without erasing it.
+The migration adds nullable `custom_name` and JSON `representation_types` columns, rebuilds the same
+trigram FTS index with both content and name, and adds `item_representations(item_id, uti, data,
+byte_count)`. Existing UUIDs, timestamps, pins, image references and recognized-text tables survive.
+Reopening an upgraded database does not rebuild its index again.
 
 Image capture (TIFF→PNG re-encode + blob write) runs off the main actor via detached tasks; row
 inserts, original-text search, and pruning stay on the main actor.
@@ -476,9 +478,12 @@ writes nothing, so the same press moves on to the next entry.
 copy made inside the 0.5s poll interval would otherwise be overwritten unrecorded, and the walk
 would start one entry too old.
 
-**What keeps a walk going is the pasteboard count its own write left.** Any other count means the
-user copied since, and a pause of `PasteSequence.idleTimeout` (60s) since the last paste does the
-same; either starts the walk over from the newest entry. Past the oldest entry a press shows
+**A walk follows a snapshot of stable UUIDs from the whole stored history**, ordered by timestamp
+newest first, independently of the pinned UI section. Each press resolves the current item by UUID,
+so editing uses the new content and deleting or expiring an entry skips it. A capture identity changes
+when a new history entry arrives; Tinycast's marked writes and history promotions do not change it.
+The sequence restarts on a new capture or after **Sequence Timeout**, default **30 Seconds**.
+The available intervals are 5, 10 and 30 seconds, 1 and 2 minutes, and 5 minutes. Past the oldest entry a press shows
 **Nothing left to paste** rather than wrapping. The pasteboard keeps the last entry pasted, as after
 any other Tinycast paste.
 
@@ -486,3 +491,114 @@ any other Tinycast paste.
 `pasteInPlace` writes the pasteboard at once and posts ⌘V 50ms later, and the target reads the
 pasteboard only when it handles that ⌘V. A press inside that gap would swap the pasteboard first:
 one entry pasted twice, another skipped. A queue would replay a held shortcut as a burst.
+
+
+**Reset Paste Sequence** clears session state and shows **Paste sequence reset**. Both commands use
+the built-in command catalog, aliases and global shortcut bindings; Reset has no default shortcut.
+Sequence state is not backed up or persisted across launches. A press waits for pending image capture
+before freezing its snapshot, so an image copied just before the hotkey is not skipped.
+
+**Add a new line after pasting text** is off by default. It sends a synthetic Return after ⌘V for
+text entries only, including links, addresses and colors. The target decides how Return behaves;
+a single-line field may submit instead of inserting a line break. The stored payload is untouched.
+Images and referenced files never send this key. Prefer Plain Text applies to sequential text pastes
+through the same restoration policy used by the normal paste action.
+
+## Rich clipboard
+
+Search and preview still use the normalized `text` or PNG/file-reference fields. Original source bytes
+are separate: no HTML or RTF is generated from plain text. Original paste and Copy to Clipboard restore
+the retained types together on one `NSPasteboardItem`, with the private internal marker; the target
+app chooses the representation it accepts. Without retained types, both use the existing normalized
+text, PNG or durable file URL plus path. All normal paste paths, including double-click, pins and
+Paste and Keep Window Open, use the coordinator's shared lazy payload reader and `Paster.write`.
+
+**Paste as…** in ⌘K opens the existing palette action menu as a format submenu. Arrow keys and Return
+select a format; Escape returns to the parent menu. It offers Original and, where meaningful, Plain
+Text, Rich Text, HTML, URL, Image or Color. Rich Text exists only with RTF/RTFD and prefers flat RTFD
+so attachments survive. HTML publishes only the original HTML type; it requires an HTML-aware receiver.
+Plain Text publishes only `public.utf8-plain-text` plus Tinycast's marker, never rich data. A file's
+plain option is its path; an image has no plain option. Format names never expose raw UTIs.
+
+**Prefer pasting as plain text** is off by default and only changes the default paste of text entries.
+It does not change Copy to Clipboard, the Default action chord mapping, or an explicit Original/Rich
+Text/HTML action. Original formats remain stored. The existing Paste as Plain Text default and
+⌃⌘↵ chord remain supported.
+
+### Retained types and limits
+
+The allowlist preserves original bytes for:
+
+- `public.utf8-plain-text`, `public.utf16-plain-text`
+- `public.rtf`, `com.apple.flat-rtfd`, `public.html`
+- `public.url`
+- `public.png`, `public.tiff`
+- `com.apple.cocoa.pasteboard.color`
+
+Small binary types, including RTFD, use the separate representation table. Limits are **256 KiB per
+type**, **512 KiB per entry**, **32 MiB total raw payload bytes**, and **2 MiB of queued capture data**.
+At the global cap, additional formats are skipped; existing entries are not evicted. Deletion and
+retention remove associated representations; SQLite reuses freed pages. The limits bound raw data,
+not SQLite page overhead or the transient WAL. Image PNGs continue to live as files under `images/`,
+so an oversized original image representation can still paste through the existing normalized PNG.
+
+The resident newest 1,000 entries and pins keep only type names, never rich bytes. Representation
+writes and reads run off-main with a 1 MiB SQLite reader cache; Paste/Copy load one bounded entry
+on demand. Optional source representations are read off-main, with at most eight pending source
+requests. A before/after change-count check rejects a source that changed while it was read; in that
+case the normalized entry remains usable. Paste waits for capture before restoring the payload. Queries, type detection and OCR never load rich payloads. Capture does not parse HTML,
+RTF or Webarchive. NSPasteboard exposes no public size preflight: a source provider must materialize
+its data before Tinycast can check its size, so a slow or huge provider can still impose a transient
+read cost and allocation, even though optional rich reads do not block the main actor. No
+retained-size policy can remove that macOS API limitation.
+
+**Not retained as raw data:** Webarchive, arbitrary app-private types, promised files, bookmarks,
+legacy filename lists, raw `public.file-url` payloads, and types above the limits. Webarchives may
+bundle resources and external references; promises and bookmarks are not durable inline payloads.
+Durable file URLs instead use the existing referenced-file capture and paste path, which never copies
+the original file. Text capture requires a plain-string or URL representation for normalization;
+HTML-only and RTF-only boards without readable text are not newly parsed into history.
+
+Tinycast continues recording a multi-file copy as one entry per durable file, up to 32 files, rather
+than Raycast v2's grouped entry. Rename works on every resulting file entry. A multi-item text board
+retains the representations of the item supplying the normalized text, without combining formats
+from unrelated items. These choices preserve the existing file-reference and normalized capture
+invariants; they do not claim arbitrary pasteboard item grouping parity.
+
+## Editing and names
+
+**Edit Content** is available for text, links, email addresses and colors. It opens the native dialog
+editor, prefilled, with Return inserting a newline, **⌘Return** saving and **Escape** cancelling.
+Saving keeps the UUID, original timestamp, pin and custom name, updates the same FTS index, and lets
+the existing classifier derive the new category. There is no category-specific validation. Text is
+limited to the existing 32,000-character capture budget. All old rich data is invalidated atomically:
+the edited entry becomes plain text, so a stale HTML/RTF version cannot paste instead of the edit.
+Images and file references cannot be content-edited.
+
+**Rename Entry (⌘E)** opens a prefilled single-line native dialog. Return saves, Escape cancels, and
+an empty or whitespace-only name removes it. Names are limited to 1,024 UTF-8 bytes. They are only
+metadata: the list shows the name above the content preview, and both the name and original content
+remain searchable through the same trigram index. Rename never changes paste, timestamps, pins,
+file references, OCR or images. Names survive pinning and restart.
+
+## Backup and privacy
+
+The settings backup and settings.json mirror carry Prefer Plain Text, Sequence Timeout and Add New
+Line. Command shortcuts and aliases travel through their existing built-in-command backup paths.
+The opt-in Clipboard History backup streams names and bounded representations with each record;
+OCR metadata and session sequence state stay excluded. Legacy backup records lacking these optional
+fields restore as before. Imports apply the same representation allowlist and size budgets.
+
+Raycast import retains inline plain text, HTML and RTF when their MIME and text encoding are explicit,
+plus a supplied `customName` or `title`. URL-backed images retain the existing local-file import path.
+Unknown encodings, arbitrary binary representations and remote references are not decoded or fetched.
+Source item boundaries are preserved when choosing a text item's rich formats.
+
+All capture guards run before representation reads: excluded applications, Passwords/Keychain Access,
+concealed/transient/sensitive markers and Tinycast's private marker suppress the whole event. Rich
+bytes stay local and are never logged, sent to AI, analyzed or fetched over the network.
+
+The current Raycast reference is [Clipboard History](https://manual.raycast.com/clipboard-history).
+It does not define end-of-sequence wrapping, so Tinycast keeps its existing explicit end HUD and offers
+Reset rather than silently choosing a different order. Rich representation bounds and existing
+multi-file capture are intentional differences from Raycast's save-every-format/grouped model.

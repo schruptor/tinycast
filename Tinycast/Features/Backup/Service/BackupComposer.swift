@@ -94,7 +94,7 @@ enum BackupComposer {
         ClipboardStore.forEachStoredItem(inDatabaseAt: database) { item in
             guard failure == nil else { return }
             do {
-                guard let portable = try portableItem(item, into: bundle) else {
+                guard let portable = try portableItem(item, database: database, into: bundle) else {
                     missing += 1
                     return
                 }
@@ -110,7 +110,7 @@ enum BackupComposer {
 
     /// nil when the image has gone; hardlinked where the volume allows, so PNGs cost inodes.
     private nonisolated static func portableItem(
-        _ item: ClipboardItem, into bundle: BackupBundle
+        _ item: ClipboardItem, database: URL, into bundle: BackupBundle
     )
         throws -> BackupClipboardItem?
     {
@@ -144,10 +144,17 @@ enum BackupComposer {
         case .image: kind = .image
         case .file: kind = .file
         }
+        let representations =
+            item.representationTypes.isEmpty
+            ? []
+            : ClipboardRepresentationStore.read(for: item.id, inDatabaseAt: database)
         return BackupClipboardItem(
             kind: kind, text: item.text, imageName: imageName,
             createdAt: item.createdAt, sourceBundleID: item.sourceBundleID,
-            pinnedAt: item.pinnedAt)
+            pinnedAt: item.pinnedAt, customName: item.customName,
+            representations: representations.map {
+                BackupClipboardItem.Representation(type: $0.type, data: $0.data)
+            })
     }
 
     /// Markdown copied verbatim: both repositories read `.md` back, so a round trip loses nothing.

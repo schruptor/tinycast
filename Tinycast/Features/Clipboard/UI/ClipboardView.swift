@@ -147,10 +147,19 @@ private struct ClipboardRow: View {
         return HStack(spacing: metrics.spacing.lg) {
             thumbnail(item.colorValue)
                 .frame(width: metrics.size.resultRowIcon, height: metrics.size.resultRowIcon)
-            Text(previewText)
-                .font(metrics.typography.menuRow)
-                .lineLimit(1)
-                .truncationMode(.tail)
+            VStack(alignment: .leading, spacing: metrics.spacing.xxs) {
+                Text(item.customName ?? previewText)
+                    .font(metrics.typography.menuRow)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                if item.customName != nil {
+                    Text(previewText)
+                        .font(metrics.typography.rowTrailing)
+                        .foregroundStyle(Theme.Colors.textSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+            }
             Spacer(minLength: 0)
             if let slot, palette.commandHeld {
                 HStack(spacing: metrics.spacing.xxs) {

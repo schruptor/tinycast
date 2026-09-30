@@ -31,6 +31,7 @@ enum PaletteShortcut: Equatable {
     /// ⌘R.
     case restart
     /// ⌘N, a new one of whatever the screen holds.
+    case rename
     case newItem
     /// ⌥⌘,, the screen's own settings; ⌘, alone stays the app's.
     case settings
@@ -59,6 +60,7 @@ enum PaletteShortcut: Equatable {
         if command, shift, matches("f") { return .toggleFavorite }
         if command, shift, matches("h") { return .hideFromSearch }
         if control, shift, matches("q") { return .quit }
+        if command, !shift, !option, !control, matches("e") { return .rename }
         if command, matches("r") { return .restart }
         if command, !shift, matches("n") { return .newItem }
         if command, option, matches(",") { return .settings }
@@ -69,7 +71,7 @@ enum PaletteShortcut: Equatable {
     /// The compact bar shows no selection, so a chord aimed at a highlighted row waits for the list.
     var requiresExpanded: Bool {
         switch self {
-        case .copyFile, .copyName, .copyPath, .copyText, .pasteFile, .quickLook, .toggleFavorite,
+        case .rename, .copyFile, .copyName, .copyPath, .copyText, .pasteFile, .quickLook, .toggleFavorite,
             .hideFromSearch, .quit, .restart:
             true
         case .commandDelete, .delete, .deleteAll, .pin, .favoriteSlot, .continueInChat, .newItem,
@@ -80,7 +82,7 @@ enum PaletteShortcut: Equatable {
 
     var closesMenu: Bool {
         switch self {
-        case .delete, .deleteAll, .copyFile, .copyName, .copyPath, .copyText, .copyCalculation,
+        case .rename, .delete, .deleteAll, .copyFile, .copyName, .copyPath, .copyText, .copyCalculation,
             .quickLook, .toggleFavorite, .hideFromSearch, .newItem, .settings:
             true
         case .commandDelete, .pasteFile, .quit, .restart, .pin, .favoriteSlot, .continueInChat:

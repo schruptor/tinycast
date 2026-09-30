@@ -22,6 +22,9 @@ struct SettingsBackup: Codable {
         // Carried, unlike the consent flags: recording your own copies grants no permission class.
         var clipboardEnabled: Bool?
         var clipboardRetentionDays: Int?
+        var clipboardPreferPlainText: Bool?
+        var clipboardSequenceTimeout: Int?
+        var clipboardSequenceNewline: Bool?
         var clipboardDefaultAction: String?
         var clipboardDisabledApps: [String]?
         var launchAtLogin: Bool?
@@ -132,6 +135,9 @@ extension SettingsBackup {
         backup.settings = SettingsData(
             clipboardEnabled: s.clipboardEnabled,
             clipboardRetentionDays: s.clipboardRetention.rawValue,
+            clipboardPreferPlainText: s.clipboardPreferPlainText,
+            clipboardSequenceTimeout: s.clipboardSequenceTimeout.rawValue,
+            clipboardSequenceNewline: s.clipboardSequenceNewline,
             clipboardDefaultAction: s.clipboardDefaultAction.rawValue,
             clipboardDisabledApps: s.clipboardDisabledApps,
             launchAtLogin: s.launchAtLogin,
@@ -307,6 +313,18 @@ extension SettingsBackup {
         }
         if let apps = s.clipboardDisabledApps {
             settings.clipboardDisabledApps = apps
+            count += 1
+        }
+        if let value = s.clipboardPreferPlainText {
+            settings.clipboardPreferPlainText = value
+            count += 1
+        }
+        if let value = s.clipboardSequenceTimeout, let timeout = ClipboardSequenceTimeout(rawValue: value) {
+            settings.clipboardSequenceTimeout = timeout
+            count += 1
+        }
+        if let value = s.clipboardSequenceNewline {
+            settings.clipboardSequenceNewline = value
             count += 1
         }
         if let raw = s.clipboardDefaultAction, let action = ClipboardDefaultAction(rawValue: raw) {

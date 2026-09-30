@@ -6,6 +6,9 @@ enum SettingsBackupCoverage {
     static let mirrored: [String: AppSettingsKey] = [
         "clipboardEnabled": .clipboardEnabled,
         "clipboardRetentionDays": .clipboardRetention,
+        "clipboardPreferPlainText": .clipboardPreferPlainText,
+        "clipboardSequenceTimeout": .clipboardSequenceTimeout,
+        "clipboardSequenceNewline": .clipboardSequenceNewline,
         "clipboardDefaultAction": .clipboardDefaultAction,
         "clipboardDisabledApps": .clipboardDisabledApps,
         "hyperKey": .hyperKey,

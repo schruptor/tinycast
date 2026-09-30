@@ -141,3 +141,10 @@ what keeps a second pass from silently failing its inserts. Same reasoning as `Q
 The old flat `Tinycast-Settings-*.json` export is gone rather than deprecated, and nothing reads it.
 
 Raycast import is documented separately in [raycast-import.md](raycast-import.md).
+
+
+Clipboard records also carry optional custom names and bounded original pasteboard representations.
+They stream one record at a time and use the clipboard representation allowlist and storage limits
+on import. Older records omit those fields. The settings mirror carries clipboard plain-text
+preference, sequence timeout and optional newline; shortcut and alias storage remains shared with
+other built-in commands. Sequence session state is never backed up.

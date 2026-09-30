@@ -219,13 +219,6 @@ final class PaletteWindowController: NSObject, NSWindowDelegate {
         return true
     }
 
-    /// Paste into the previous app while the palette stays frontmost.
-    @discardableResult
-    func pasteKeepingWindowOpen(_ item: ClipboardItem, store: ClipboardStore) -> Bool {
-        Paster.pasteInPlace(item, store: store, into: previousApp)
-    }
-
-    /// String flavor of the above, for emoji/symbol pastes.
     func pasteStringKeepingWindowOpen(_ text: String) {
         Paster.pasteStringInPlace(text, into: previousApp)
     }

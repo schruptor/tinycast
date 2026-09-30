@@ -51,9 +51,16 @@ enum BackupApplier {
     private nonisolated static func importClipboard(
         _ bundle: BackupBundle, into store: ClipboardStore
     ) async -> Int {
-        ClipboardStore.importStoredItems(
+        var current: [ClipboardRepresentation] = []
+        return ClipboardStore.importStoredItems(
             inDatabaseAt: store.dbURL, adoptingImagesInto: store.imagesDir,
-            bundle.clipboardItems().lazy.compactMap { staged($0, in: bundle) })
+            bundle.clipboardItems().lazy.compactMap {
+                current = ClipboardRepresentation.bounded(
+                    ($0.representations ?? []).map {
+                        ClipboardRepresentation(type: $0.type, data: $0.data)
+                    })
+                return staged($0, in: bundle)
+            }, representations: { _ in current })
     }
 
     /// The row still points into staging; the store adopts the blob once it accepts the clip.
@@ -65,7 +72,7 @@ enum BackupApplier {
             guard let text = item.text else { return nil }
             return ClipboardItem(
                 id: UUID(), kind: .text, text: text, imagePath: nil, createdAt: item.createdAt,
-                sourceBundleID: item.sourceBundleID, pinnedAt: item.pinnedAt)
+                sourceBundleID: item.sourceBundleID, pinnedAt: item.pinnedAt, customName: item.customName)
         case .image:
             guard let name = item.imageName, let url = bundle.clipboardImageURL(named: name) else {
                 return nil
@@ -73,7 +80,7 @@ enum BackupApplier {
             return ClipboardItem(
                 id: UUID(), kind: .image, text: nil, imagePath: url.path,
                 createdAt: item.createdAt, sourceBundleID: item.sourceBundleID,
-                pinnedAt: item.pinnedAt)
+                pinnedAt: item.pinnedAt, customName: item.customName)
         case .file:
             // A path from another Mac names nothing here, so the row is dropped rather than dead.
             guard let path = item.text, FileManager.default.fileExists(atPath: path) else {
@@ -81,7 +88,7 @@ enum BackupApplier {
             }
             return ClipboardItem(
                 id: UUID(), kind: .file, text: path, imagePath: nil, createdAt: item.createdAt,
-                sourceBundleID: item.sourceBundleID, pinnedAt: item.pinnedAt)
+                sourceBundleID: item.sourceBundleID, pinnedAt: item.pinnedAt, customName: item.customName)
         }
     }
 

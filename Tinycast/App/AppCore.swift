@@ -864,6 +864,10 @@ final class AppCore {
     }
 
     /// The new-event prompt, for the same reason.
+    func editClipboardText(_ text: String, renaming: Bool) async -> String? {
+        await dialogs.editClipboardText(text, renaming: renaming)
+    }
+
     func createEvent() async -> EventDraft? {
         await dialogs.createEvent()
     }

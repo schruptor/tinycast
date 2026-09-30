@@ -41,8 +41,25 @@ struct ClipboardSettingsView: View {
                     SettingsRowTitle(.clipboardHistory, "Default action")
                     Text("↵ does this, and Paste takes its shortcut.")
                 }
+                Toggle(isOn: $settings.clipboardPreferPlainText) {
+                    SettingsRowTitle(.clipboardHistory, "Prefer pasting as plain text")
+                }
             } header: {
                 SettingsSectionHeader(.clipboardHistory)
+            }
+            .settingsEnabled(settings.clipboardEnabled)
+
+            Section("Paste Sequentially") {
+                Picker(selection: $settings.clipboardSequenceTimeout) {
+                    ForEach(ClipboardSequenceTimeout.allCases) { timeout in
+                        Text(timeout.title).tag(timeout)
+                    }
+                } label: {
+                    SettingsRowTitle(.clipboardCommands, "Sequence Timeout")
+                }
+                Toggle(isOn: $settings.clipboardSequenceNewline) {
+                    SettingsRowTitle(.clipboardCommands, "Add a new line after pasting text")
+                }
             }
             .settingsEnabled(settings.clipboardEnabled)
 

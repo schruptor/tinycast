@@ -65,3 +65,10 @@ the app build rather than the harness.
 
 `RaycastImport` is only the data: `Result`, `selecting(_:)` and `RaycastImportOptions`.
 `BackupActions.importRaycast` runs the reader off the main actor.
+
+
+Clipboard import preserves a supplied `customName`/`title` and inline MIME-identified plain text,
+HTML and RTF from the same source item. Only absent, string or text content encodings are accepted;
+URL-backed or unknown binary encodings are not guessed. Representation data uses the same allowlist
+and per-type, per-entry and total budgets as native capture. Existing URL-backed image references
+continue to import only if the local file exists. No remote representation is fetched.

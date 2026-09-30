@@ -89,3 +89,9 @@ Everything here ships **off**, except Clipboard and Emoji & Symbols.
 
 **About.** Version, license, **Check for Updates**, links to the project, and **Support**. See
 [Updates](/docs/reference/updates).
+
+
+Clipboard's **Prefer pasting as plain text** applies to default text pastes without changing saved
+formats or Copy to Clipboard. **Paste Sequentially** offers **Sequence Timeout** (30 seconds by
+default) and **Add a new line after pasting text** (off by default). Assign aliases and global
+shortcuts to **Paste Sequentially** and **Reset Paste Sequence** in the Clipboard command list.

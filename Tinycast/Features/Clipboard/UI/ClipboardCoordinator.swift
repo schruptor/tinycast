@@ -15,6 +15,7 @@ final class ClipboardCoordinator {
     /// One Copy Text at a time: a newer trigger cancels the helper an older one is waiting on.
     private var textTask: Task<Void, Never>?
     private var pasteSequence: PasteSequence?
+    private var pasteTask: Task<Void, Never>?
 
     init(
         clipboardStore: ClipboardStore,
@@ -38,8 +39,11 @@ final class ClipboardCoordinator {
 
     /// Off means the poller stops, the database closes and nothing new is ever recorded.
     func applyEnabled() {
-        appIndex.setCommandsVisible([.clipboardHistory, .pasteSequentially], settings.clipboardEnabled)
+        appIndex.setCommandsVisible(
+            [.clipboardHistory, .pasteSequentially, .resetPasteSequence], settings.clipboardEnabled)
         guard settings.clipboardEnabled else {
+            pasteTask?.cancel()
+            pasteSequence = nil
             core.applyClipboardTextSearch()
             clipboardManager.stop()
             if palette.mode == .clipboard { palette.prepare(mode: .launcher) }
@@ -89,65 +93,155 @@ final class ClipboardCoordinator {
         }
     }
 
-    func paste(_ item: ClipboardItem) {
-        let previous = windowController.previousApp
-        paletteCoordinator.hidePalette(restoreFocus: false)
-        // A paste promotes the item, so follow it and keep the moved row highlighted.
-        if Paster.paste(item, store: clipboardStore, previousApp: previous) {
-            selectClip(item)
-        } else {
-            reportUnavailable(item)
-        }
+    isolated deinit { pasteTask?.cancel() }
+
+    private func defaultMode(for item: ClipboardItem) -> ClipboardPasteMode {
+        ClipboardPasteMode.preferred(for: item, plainText: settings.clipboardPreferPlainText)
     }
 
-    /// A file's path stays valid text after the file goes, so this never reports it missing.
-    func pasteAsPlainText(_ item: ClipboardItem) {
-        let previous = windowController.previousApp
-        paletteCoordinator.hidePalette(restoreFocus: false)
-        if Paster.pastePlainText(item, store: clipboardStore, previousApp: previous) {
-            selectClip(item)
-        }
+    func paste(_ item: ClipboardItem) { paste(item, mode: defaultMode(for: item)) }
+
+    func paste(_ item: ClipboardItem, mode: ClipboardPasteMode) {
+        restore(item, mode: mode, copying: false, keepingOpen: false)
     }
+
+    func pasteAsPlainText(_ item: ClipboardItem) { paste(item, mode: .plainText) }
 
     func pasteKeepingWindowOpen(_ item: ClipboardItem) {
-        if !windowController.pasteKeepingWindowOpen(item, store: clipboardStore) {
-            reportUnavailable(item)
+        restore(item, mode: defaultMode(for: item), copying: false, keepingOpen: true)
+    }
+
+    private func restore(
+        _ item: ClipboardItem, mode: ClipboardPasteMode, copying: Bool, keepingOpen: Bool
+    ) {
+        guard pasteTask == nil else { return }
+        clipboardManager.prepareForTinycastPasteboardMutation()
+        let previous = windowController.previousApp
+        pasteTask = Task { [weak self] in
+            guard let self else { return }
+            defer { pasteTask = nil }
+            guard let (current, representations) = await payload(for: item.id) else { return }
+            if !keepingOpen { paletteCoordinator.hidePalette(restoreFocus: false) }
+            let succeeded: Bool
+            if copying {
+                succeeded = Paster.copy(current, store: clipboardStore, representations: representations)
+            } else if keepingOpen {
+                succeeded = Paster.pasteInPlace(
+                    current, store: clipboardStore, into: previous,
+                    mode: mode, representations: representations)
+            } else {
+                succeeded = Paster.paste(
+                    current, store: clipboardStore, previousApp: previous,
+                    mode: mode, representations: representations)
+            }
+            if succeeded { selectClip(current) } else { reportUnavailable(current) }
         }
     }
 
-    /// Each press pastes the next older entry into the app in front, never promoting it.
+    private func payload(for id: UUID) async -> (ClipboardItem, [ClipboardRepresentation])? {
+        await clipboardManager.flushCapture()
+        while !Task.isCancelled {
+            await clipboardStore.flushRepresentations()
+            guard let item = clipboardStore.item(withID: id) else { return nil }
+            if item.representationTypes.isEmpty { return (item, []) }
+            let url = clipboardStore.dbURL
+            let representations = await Task.detached(priority: .userInitiated) {
+                ClipboardRepresentationStore.read(for: id, inDatabaseAt: url)
+            }.value
+            if !Task.isCancelled, clipboardStore.item(withID: id) == item { return (item, representations) }
+        }
+        return nil
+    }
+
+    func resetPasteSequence() {
+        pasteTask?.cancel()
+        pasteSequence = nil
+        if paletteCoordinator.isVisible { paletteCoordinator.hidePalette() }
+        core.showMessage("Paste sequence reset")
+    }
+
     func pasteNextInSequence() {
+        guard settings.clipboardEnabled, pasteTask == nil else { return }
         let now = Date()
-        // Dropped rather than queued, so a held shortcut cannot paste a burst of entries.
         if let pasteSequence, pasteSequence.isSettling(at: now) { return }
         guard let target = paletteCoordinator.targetApp else { return }
-        // A copy made just before the press must reach history, or the walk starts one entry late.
         clipboardManager.prepareForTinycastPasteboardMutation()
-        var sequence = continuingPasteSequence(at: now)
-        while let item = sequence.next(in: clipboardStore.items) {
-            if paletteCoordinator.isVisible { paletteCoordinator.hidePalette() }
-            // An image or file gone from disk writes nothing, so the press moves on to the next.
-            guard Paster.pasteInPlace(item, store: clipboardStore, into: target) else { continue }
-            sequence.recordPaste(changeCount: NSPasteboard.general.changeCount, at: now)
+        pasteTask = Task { [weak self] in
+            guard let self else { return }
+            defer { pasteTask = nil }
+            await clipboardManager.flushCapture()
+            var sequence = continuingPasteSequence(at: now)
+            while let next = sequence.next(resolve: { clipboardStore.item(withID: $0) }) {
+                guard let (item, representations) = await payload(for: next.id) else {
+                    if Task.isCancelled { return }
+                    continue
+                }
+                if paletteCoordinator.isVisible { paletteCoordinator.hidePalette() }
+                guard
+                    Paster.pasteInPlace(
+                        item, store: clipboardStore, into: target,
+                        mode: defaultMode(for: item), representations: representations,
+                        addNewline: settings.clipboardSequenceNewline)
+                else {
+                    reportUnavailable(item)
+                    continue
+                }
+                sequence.recordPaste(changeCount: NSPasteboard.general.changeCount, at: Date())
+                pasteSequence = sequence
+                return
+            }
             pasteSequence = sequence
-            return
+            core.showMessage("Nothing left to paste", tone: .neutral)
         }
-        core.showMessage("Nothing left to paste", tone: .neutral)
     }
 
-    /// A copy since the last press, or a long pause, starts the walk over from the newest entry.
     private func continuingPasteSequence(at now: Date) -> PasteSequence {
         let changeCount = NSPasteboard.general.changeCount
-        if let pasteSequence, pasteSequence.continues(changeCount: changeCount, at: now) {
+        if let pasteSequence,
+            pasteSequence.continues(
+                changeCount: changeCount, at: now,
+                timeout: TimeInterval(settings.clipboardSequenceTimeout.rawValue),
+                captureIdentity: clipboardStore.captureIdentity)
+        {
             return pasteSequence
         }
-        return PasteSequence(history: clipboardStore.items, changeCount: changeCount, now: now)
+        return PasteSequence(
+            entryIDs: clipboardStore.sequenceIDs(), changeCount: changeCount,
+            now: now, captureIdentity: clipboardStore.captureIdentity)
+    }
+
+    func editContent(_ item: ClipboardItem) {
+        guard item.kind == .text else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            guard let text = await core.editClipboardText(item.text ?? "", renaming: false) else { return }
+            if !clipboardStore.editContent(item, to: text) {
+                core.showMessage("Couldn’t save clipboard content", tone: .danger)
+            }
+        }
+    }
+
+    func renameEntry(_ item: ClipboardItem) {
+        Task { [weak self] in
+            guard let self else { return }
+            guard let name = await core.editClipboardText(item.customName ?? "", renaming: true) else {
+                return
+            }
+            if !clipboardStore.rename(item, to: name) {
+                core.showMessage("Couldn’t save clipboard name", tone: .danger)
+            }
+        }
     }
 
     /// A write only fails on a vanished file, and a palette that just closes explains nothing.
     private func reportUnavailable(_ item: ClipboardItem) {
-        guard item.kind == .file else { return }
-        core.showMessage("That file has moved or been deleted.", tone: .danger)
+        let message =
+            switch item.kind {
+            case .file: "That file has moved or been deleted."
+            case .image: "That image is no longer available."
+            case .text: "That format is no longer available."
+            }
+        core.showMessage(message, tone: .danger)
     }
 
     /// Both the ⌃⇧X chord and the menu row land here, so neither can skip the confirmation.
@@ -169,12 +263,7 @@ final class ClipboardCoordinator {
     }
 
     func copyToClipboard(_ item: ClipboardItem) {
-        paletteCoordinator.hidePalette(restoreFocus: false)
-        if Paster.copy(item, store: clipboardStore) {
-            selectClip(item)
-        } else {
-            reportUnavailable(item)
-        }
+        restore(item, mode: .original, copying: true, keepingOpen: false)
     }
 
     /// Unmarked, so a converted colour enters history itself — it is one you meant to keep.

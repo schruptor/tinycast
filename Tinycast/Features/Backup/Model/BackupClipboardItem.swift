@@ -8,6 +8,11 @@ struct BackupClipboardItem: Codable, Sendable, Equatable {
         case file
     }
 
+    struct Representation: Codable, Sendable, Equatable {
+        var type: String
+        var data: Data
+    }
+
     var kind: Kind
     var text: String?
     /// A filename inside the bundle's `clipboard/images/`, never a path.
@@ -15,4 +20,6 @@ struct BackupClipboardItem: Codable, Sendable, Equatable {
     var createdAt: Date
     var sourceBundleID: String?
     var pinnedAt: Date?
+    var customName: String?
+    var representations: [Representation]?
 }

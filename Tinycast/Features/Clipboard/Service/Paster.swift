@@ -14,32 +14,25 @@ enum Paster {
     /// Write the item and paste it into `previousApp`, activating it so ⌘V lands there.
     @MainActor @discardableResult
     static func paste(
-        _ item: ClipboardItem, store: ClipboardStore, previousApp: NSRunningApplication?
+        _ item: ClipboardItem, store: ClipboardStore, previousApp: NSRunningApplication?,
+        mode: ClipboardPasteMode = .original, representations: [ClipboardRepresentation] = []
     ) -> Bool {
-        guard write(item, store: store) else { return false }
+        guard write(item, store: store, mode: mode, representations: representations) else { return false }
         store.promote(item)
         previousApp?.activate()
-        DispatchQueue.main.asyncAfter(deadline: .now() + activationDelay) {
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(activationDelay))
             postCommandV()
         }
         return true
     }
 
-    /// Paste only the item's text, so a file arrives as its path and the receiver's style applies.
-    @MainActor @discardableResult
-    static func pastePlainText(
-        _ item: ClipboardItem, store: ClipboardStore, previousApp: NSRunningApplication?
-    ) -> Bool {
-        guard let text = item.plainText else { return false }
-        pasteString(text, previousApp: previousApp)
-        store.promote(item)
-        return true
-    }
-
     /// Put the item on the pasteboard without pasting; the marker stops re-capture.
     @MainActor @discardableResult
-    static func copy(_ item: ClipboardItem, store: ClipboardStore) -> Bool {
-        guard write(item, store: store) else { return false }
+    static func copy(
+        _ item: ClipboardItem, store: ClipboardStore, representations: [ClipboardRepresentation] = []
+    ) -> Bool {
+        guard write(item, store: store, representations: representations) else { return false }
         store.promote(item)
         return true
     }
@@ -58,7 +51,8 @@ enum Paster {
     static func pasteString(_ text: String, previousApp: NSRunningApplication?) {
         writeString(text)
         previousApp?.activate()
-        DispatchQueue.main.asyncAfter(deadline: .now() + activationDelay) {
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(activationDelay))
             postCommandV()
         }
     }
@@ -68,7 +62,8 @@ enum Paster {
     static func pasteFile(_ url: URL, previousApp: NSRunningApplication?) {
         PasteboardFiles.write(url, to: .general)
         previousApp?.activate()
-        DispatchQueue.main.asyncAfter(deadline: .now() + activationDelay) {
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(activationDelay))
             postCommandV()
         }
     }
@@ -84,7 +79,8 @@ enum Paster {
     static func pasteStringInPlace(_ text: String, into app: NSRunningApplication?) {
         writeString(text)
         guard let pid = app?.processIdentifier else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + directPostDelay) {
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(directPostDelay))
             postCommandV(toPid: pid)
         }
     }
@@ -101,12 +97,21 @@ enum Paster {
     /// Paste into `app` without activating or promoting, so the palette and its rows hold still.
     @MainActor @discardableResult
     static func pasteInPlace(
-        _ item: ClipboardItem, store: ClipboardStore, into app: NSRunningApplication?
+        _ item: ClipboardItem, store: ClipboardStore, into app: NSRunningApplication?,
+        mode: ClipboardPasteMode = .original, representations: [ClipboardRepresentation] = [],
+        addNewline: Bool = false
     ) -> Bool {
-        guard write(item, store: store) else { return false }
+        guard write(item, store: store, mode: mode, representations: representations) else { return false }
         if let pid = app?.processIdentifier {
-            DispatchQueue.main.asyncAfter(deadline: .now() + directPostDelay) {
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(directPostDelay))
                 postCommandV(toPid: pid)
+                if ClipboardPasteMode.appendsNewline(to: item, enabled: addNewline) {
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .milliseconds(100))
+                        postNewline(toPid: pid)
+                    }
+                }
             }
         }
         return true
@@ -115,35 +120,64 @@ enum Paster {
     /// Whether anything was written; a vanished item leaves the pasteboard untouched.
     @MainActor @discardableResult
     static func write(
-        _ item: ClipboardItem, store: ClipboardStore, to pb: NSPasteboard = .general
+        _ item: ClipboardItem, store: ClipboardStore, to pb: NSPasteboard = .general,
+        mode: ClipboardPasteMode = .original, representations: [ClipboardRepresentation] = []
     ) -> Bool {
+        if mode == .plainText, let text = item.plainText {
+            let payload = NSPasteboardItem()
+            payload.setString(text, forType: .string)
+            payload.setData(Data(), forType: ClipboardManager.internalType)
+            pb.clearContents()
+            return pb.writeObjects([payload])
+        }
+        let representations = ClipboardRepresentation.bounded(representations)
+        let available = representations.map(\.type)
+        let selected = representations.filter { mode.selects($0.type, available: available) }
+        if !selected.isEmpty {
+            let payload = NSPasteboardItem()
+            for representation in selected {
+                payload.setData(representation.data, forType: .init(representation.type))
+            }
+            payload.setData(Data(), forType: ClipboardManager.internalType)
+            pb.clearContents()
+            return pb.writeObjects([payload])
+        }
+        guard mode == .original || mode == .plainText else { return false }
+        let payload = NSPasteboardItem()
         switch item.kind {
         case .text:
             guard let text = item.text else { return false }
-            pb.clearContents()
-            pb.declareTypes([.string, ClipboardManager.internalType], owner: nil)
-            pb.setString(text, forType: .string)
+            payload.setString(text, forType: .string)
         case .image:
             guard let url = store.imageURL(for: item),
                 let data = try? Data(contentsOf: url, options: .mappedIfSafe)
-            else {
-                return false
-            }
-            pb.clearContents()
-            pb.declareTypes([.png, ClipboardManager.internalType], owner: nil)
-            pb.setData(data, forType: .png)
+            else { return false }
+            payload.setData(data, forType: .png)
         case .file:
             guard let url = store.fileURL(for: item),
                 FileManager.default.fileExists(atPath: url.path)
             else { return false }
-            pb.clearContents()
-            pb.declareTypes([.fileURL, .string, ClipboardManager.internalType], owner: nil)
-            pb.setData(url.dataRepresentation, forType: .fileURL)
-            // Both types: a file-taking app receives the file, a text field receives the path.
-            pb.setString(url.path, forType: .string)
+            payload.setData(url.dataRepresentation, forType: .fileURL)
+            payload.setString(url.path, forType: .string)
         }
-        pb.setData(Data(), forType: ClipboardManager.internalType)
-        return true
+        payload.setData(Data(), forType: ClipboardManager.internalType)
+        pb.clearContents()
+        return pb.writeObjects([payload])
+    }
+
+    @MainActor
+    private static func postNewline(toPid pid: pid_t) {
+        let source = CGEventSource(stateID: .combinedSessionState)
+        for isDown in [true, false] {
+            guard
+                let event = CGEvent(
+                    keyboardEventSource: source,
+                    virtualKey: CGKeyCode(kVK_Return), keyDown: isDown)
+            else { continue }
+            event.flags = []
+            event.setIntegerValueField(.eventSourceUserData, value: tinycastEventTag)
+            event.postToPid(pid)
+        }
     }
 
     /// Synthesize ⌘V, to `pid` alone when given, else through the system tap.

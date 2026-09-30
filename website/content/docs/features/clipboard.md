@@ -8,7 +8,7 @@ using.
 
 Clipboard history is the one feature that ships **on**. **Settings → Clipboard → Enable Clipboard
 History** turns it off. Off means off: nothing is recorded, the history file closes, and the
-Clipboard History and Paste Sequentially commands and their shortcuts go away. What you already
+Clipboard History, Paste Sequentially and Reset Paste Sequence commands and their shortcuts go away. What you already
 saved stays, and **Clear history** still works while it is off.
 
 ## Opening it
@@ -48,8 +48,41 @@ time, without opening the palette. Copy `A`, then `B`, then `C`, and three press
 then `A` into whatever field is in front, so you can move between fields as you go.
 
 It pastes text, images and files alike, and leaves your history in the order it was. Copying
-something new, or a minute without a press, starts it over from the newest entry. After the oldest
-entry it says **Nothing left to paste** instead of starting again.
+something new starts it over from the newest entry. **Sequence Timeout** defaults to **30 Seconds**;
+choose another interval in **Settings → Clipboard → Paste Sequentially**. After the oldest entry it
+says **Nothing left to paste** instead of starting again. **Reset Paste Sequence** starts the next
+paste at the newest entry and shows **Paste sequence reset**. Both commands support aliases and
+shortcuts in Settings.
+
+Enable **Add a new line after pasting text** to send a Return after each sequential text paste.
+Images and files do not add a line break, and saved content stays unchanged. A single-line field may
+handle Return as submit.
+
+## Original formats and Paste as…
+
+**Paste as…** in <kbd>⌘</kbd><kbd>K</kbd> lets you choose among the retained formats the original app
+placed on the clipboard: **Original**, **Plain Text**, **Rich Text**, **HTML**, and other meaningful
+source formats. Only available formats appear. Return selects one; Escape goes back.
+
+Normal Paste and Copy to Clipboard restore those original formats together. **Prefer pasting as plain
+text** in Settings changes default text pastes, including sequential pastes, while explicit Original
+or Rich Text remains available. Copy to Clipboard keeps original formatting. The preference is off
+by default.
+
+Rich formats are retained up to 256 KiB per format, 512 KiB per entry and 32 MiB in total. Oversized
+formats and temporary references are skipped; the normal text or image remains usable. Webarchives
+and arbitrary application-private formats are not retained.
+
+## Edit and rename
+
+**Edit Content** in the Actions menu opens an editor for text, links, email addresses and colors.
+<kbd>⌘</kbd><kbd>return</kbd> saves; <kbd>esc</kbd> cancels. Editing keeps the entry and its pin, updates
+search and type detection, and removes its old rich formatting so outdated content cannot be pasted.
+
+**Rename Entry** (<kbd>⌘</kbd><kbd>E</kbd>) changes only the name used inside Tinycast. It never changes
+what gets pasted. The name appears above the content, and you can search by either. Return saves;
+Escape cancels. Saving an empty name restores the automatic title. Names work for images and files
+too, and survive pinning, restart and a Clipboard History backup.
 
 ## What it keeps
 

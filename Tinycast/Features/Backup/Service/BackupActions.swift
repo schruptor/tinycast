@@ -174,7 +174,7 @@ enum BackupActions {
         let summary = result.backup.apply(to: core)
         let imported =
             result.clipboard.isEmpty
-            ? 0 : core.clipboardStore.importEntries(result.clipboard)
+            ? 0 : core.clipboardStore.importEntries(result.clipboard, representations: result.representations)
         return RaycastOutcome(
             summary: summary,
             clipboardImported: imported,

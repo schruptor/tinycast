@@ -47,6 +47,7 @@ typealias MenuPanelClipPath =
     let view: (MenuPanelCorner) -> AnyView
     /// Bounds-checked by the caller against `rowCount`, so a row index is always one this menu has.
     let activate: (Int) -> Void
+    var submenu: ((Int) -> PopoverMenuContent?)?
 
     init(
         rowCount: Int, preferredSelection: Int? = nil,
@@ -88,6 +89,7 @@ typealias MenuPanelClipPath =
                 ).path(in: bounds).cgPath
             },
             motion: .palette)
+        submenu = { popover.items[$0].submenu }
     }
 }
 

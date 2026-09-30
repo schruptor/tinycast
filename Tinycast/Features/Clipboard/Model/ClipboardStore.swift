@@ -19,6 +19,9 @@ struct ClipboardItem: Identifiable, Hashable, Sendable {
     /// When the entry was pinned; pins lead the list and are exempt from pruning.
     let pinnedAt: Date?
 
+    let customName: String?
+    let representationTypes: [String]
+
     var isPinned: Bool { pinnedAt != nil }
 
     /// The referenced path, so no call site re-derives a file entry's meaning from `text`.
@@ -57,7 +60,8 @@ struct ClipboardItem: Identifiable, Hashable, Sendable {
 
     init(
         id: UUID, kind: Kind, text: String?, imagePath: String?, createdAt: Date,
-        sourceBundleID: String?, pinnedAt: Date? = nil
+        sourceBundleID: String?, pinnedAt: Date? = nil, customName: String? = nil,
+        representationTypes: [String] = []
     ) {
         self.id = id
         self.kind = kind
@@ -66,6 +70,11 @@ struct ClipboardItem: Identifiable, Hashable, Sendable {
         self.createdAt = createdAt
         self.sourceBundleID = sourceBundleID
         self.pinnedAt = pinnedAt
+        self.customName = customName.flatMap {
+            let name = $0.trimmingCharacters(in: .whitespacesAndNewlines)
+            return !name.isEmpty && name.utf8.count <= 1024 ? name : nil
+        }
+        self.representationTypes = representationTypes
     }
 
     /// Copy with the two fields the store rewrites; the pin is always stated outright.
@@ -73,12 +82,13 @@ struct ClipboardItem: Identifiable, Hashable, Sendable {
         ClipboardItem(
             id: id, kind: kind, text: text, imagePath: imagePath,
             createdAt: createdAt ?? self.createdAt, sourceBundleID: sourceBundleID,
-            pinnedAt: pinnedAt)
+            pinnedAt: pinnedAt, customName: customName, representationTypes: representationTypes)
     }
 
     /// Case-insensitive substring match: how the store filters without FTS.
     func matches(_ query: String) -> Bool {
-        text?.localizedCaseInsensitiveContains(query) ?? false
+        (text?.localizedCaseInsensitiveContains(query) ?? false)
+            || (customName?.localizedCaseInsensitiveContains(query) ?? false)
     }
 }
 
@@ -210,8 +220,8 @@ final class ClipboardStore {
     nonisolated private static let searchLimit = 200
 
     nonisolated private static let insertSQL = """
-        INSERT INTO items(id, kind, text, image_path, created_at, source_app, pinned_at)
-        VALUES(?,?,?,?,?,?,?)
+        INSERT INTO items(id, kind, text, image_path, created_at, source_app, pinned_at, custom_name, representation_types)
+        VALUES(?,?,?,?,?,?,?,?,?)
         """
 
     private static let schema = """
@@ -222,23 +232,33 @@ final class ClipboardStore {
           image_path TEXT,
           created_at REAL NOT NULL,
           source_app TEXT,
-          pinned_at REAL
+          pinned_at REAL,
+          custom_name TEXT,
+          representation_types TEXT NOT NULL DEFAULT '[]'
         );
+        CREATE TABLE IF NOT EXISTS item_representations(
+          item_id TEXT NOT NULL, uti TEXT NOT NULL, data BLOB NOT NULL, byte_count INTEGER NOT NULL,
+          UNIQUE(item_id, uti)
+        );
+        CREATE TRIGGER IF NOT EXISTS items_representations_ad AFTER DELETE ON items BEGIN
+          DELETE FROM item_representations WHERE item_id = old.id;
+        END;
         CREATE INDEX IF NOT EXISTS items_created_at ON items(created_at);
         CREATE INDEX IF NOT EXISTS items_pinned_at ON items(pinned_at) WHERE pinned_at IS NOT NULL;
         CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
-          text, content='items', content_rowid='rowid', tokenize='trigram'
+          text, custom_name, content='items', content_rowid='rowid', tokenize='trigram'
         );
         CREATE TRIGGER IF NOT EXISTS items_ai AFTER INSERT ON items BEGIN
-          INSERT INTO items_fts(rowid, text) VALUES(new.rowid, new.text);
+          INSERT INTO items_fts(rowid, text, custom_name) VALUES(new.rowid, new.text, new.custom_name);
         END;
         CREATE TRIGGER IF NOT EXISTS items_ad AFTER DELETE ON items BEGIN
-          INSERT INTO items_fts(items_fts, rowid, text) VALUES('delete', old.rowid, old.text);
+          INSERT INTO items_fts(items_fts, rowid, text, custom_name) VALUES('delete', old.rowid, old.text, old.custom_name);
         END;
-        CREATE TRIGGER IF NOT EXISTS items_au AFTER UPDATE OF rowid, text ON items BEGIN
-          INSERT INTO items_fts(items_fts, rowid, text) VALUES('delete', old.rowid, old.text);
-          INSERT INTO items_fts(rowid, text) VALUES(new.rowid, new.text);
+        CREATE TRIGGER IF NOT EXISTS items_au AFTER UPDATE OF rowid, text, custom_name ON items BEGIN
+          INSERT INTO items_fts(items_fts, rowid, text, custom_name) VALUES('delete', old.rowid, old.text, old.custom_name);
+          INSERT INTO items_fts(rowid, text, custom_name) VALUES(new.rowid, new.text, new.custom_name);
         END;
+        PRAGMA user_version=1;
         """
 
     private static let extractionSchema = """
@@ -271,6 +291,10 @@ final class ClipboardStore {
     /// Internal, not private: a backup names both to stream the table and adopt its blobs.
     let imagesDir: URL
     let dbURL: URL
+    @ObservationIgnored private var representationTask: Task<Void, Never>?
+    @ObservationIgnored private var pendingRepresentationBytes = 0
+    @ObservationIgnored private var representationRevisions: [UUID: UUID] = [:]
+    @ObservationIgnored private(set) var captureIdentity = UUID()
     @ObservationIgnored private var db: OpaquePointer?
     @ObservationIgnored private var insertStmt: OpaquePointer?
     @ObservationIgnored private var loadStmt: OpaquePointer?
@@ -294,16 +318,13 @@ final class ClipboardStore {
     func open() {
         guard db == nil else { return }
         if openDatabase() { return }
-        // Captured, not authored: discard a corrupt or outdated database and start over.
         closeDatabase()
-        for suffix in ["", "-wal", "-shm"] {
-            try? FileManager.default.removeItem(atPath: dbURL.path + suffix)
-        }
-        if !openDatabase() { closeDatabase() }
     }
 
     /// Every accessor is statement-guarded, so a closed store answers as an empty history.
     func close() {
+        representationTask?.cancel()
+        representationRevisions = [:]
         setTextSearchEnabled(false)
         extractionGeneration = UUID()
         closeDatabase()
@@ -321,6 +342,7 @@ final class ClipboardStore {
     // Isolated so teardown may touch the main-actor pointers; the release is already on main.
     isolated deinit {
         textSearchTask?.cancel()
+        representationTask?.cancel()
         closeDatabase()
     }
 
@@ -356,15 +378,20 @@ final class ClipboardStore {
         return sqlite3_step(stmt) == SQLITE_ROW ? sqlite3_column_int64(stmt, 0) : 0
     }
 
-    func addText(_ text: String, sourceBundleID: String?) {
-        if items.first?.kind == .text, items.first?.text == text { return }
-        insert(ClipboardItem(text: text, sourceBundleID: sourceBundleID))
+    @discardableResult
+    func addText(_ text: String, sourceBundleID: String?) -> ClipboardItem {
+        if let first = items.first, first.kind == .text, first.text == text { return first }
+        captureIdentity = UUID()
+        let item = ClipboardItem(text: text, sourceBundleID: sourceBundleID)
+        insert(item)
+        return item
     }
 
     /// One row per file. Batched, so a multi-file copy prunes once rather than once per file.
     func addFiles(_ paths: [String], sourceBundleID: String?) {
         // Only a single file can be a ⌘C repeat, which is the case `addText` also guards.
         if paths.count == 1, items.first?.kind == .file, items.first?.text == paths[0] { return }
+        captureIdentity = UUID()
         for path in paths {
             let item = ClipboardItem(filePath: path, sourceBundleID: sourceBundleID)
             if let stmt = insertStmt { Self.bindAndInsert(stmt, item) }
@@ -374,22 +401,33 @@ final class ClipboardStore {
         prune()
     }
 
-    func addImage(_ data: Data, sourceBundleID: String?) {
+    func addImage(
+        _ data: Data, sourceBundleID: String?, representations: [ClipboardRepresentation] = []
+    ) async {
         let url = imagesDir.appendingPathComponent(UUID().uuidString + ".png")
         let item = ClipboardItem(imagePath: url.path, sourceBundleID: sourceBundleID)
-        // The blob write is multi-MB I/O; only the row insert returns to the main actor.
-        Task.detached(priority: .utility) { [weak self] in
-            guard (try? data.write(to: url, options: .atomic)) != nil else { return }
-            await self?.insert(item)
+        let generation = extractionGeneration
+        let written = await Task.detached(priority: .utility) {
+            (try? data.write(to: url, options: .atomic)) != nil
+        }.value
+        guard written, !Task.isCancelled, generation == extractionGeneration else {
+            try? FileManager.default.removeItem(at: url)
+            return
         }
+        captureIdentity = UUID()
+        insert(item)
+        captureRepresentations(representations, for: item)
     }
 
     /// Bulk-insert from an import: original timestamps, external image paths, deduped.
     @discardableResult
-    func importEntries(_ entries: [ClipboardItem]) -> Int {
+    func importEntries(
+        _ entries: [ClipboardItem], representations: [UUID: [ClipboardRepresentation]] = [:]
+    ) -> Int {
         // Oldest first so newest ends up with the highest rowid (load orders by rowid DESC).
         let inserted = Self.importStoredItems(
-            inDatabaseAt: dbURL, entries.sorted { $0.createdAt < $1.createdAt })
+            inDatabaseAt: dbURL, entries.sorted { $0.createdAt < $1.createdAt },
+            representations: { representations[$0.id] ?? [] })
         load()
         return inserted
     }
@@ -419,6 +457,7 @@ final class ClipboardStore {
 
     /// A pin is a deliberate keep, so it outlives the bulk clear; `remove` is the way to drop one.
     func clearAll() {
+        captureIdentity = UUID()
         invalidateSearch()
         extractionGeneration = UUID()
         // RETURNING hands back the deleted blobs in the same pass, so no separate SELECT is needed.
@@ -462,7 +501,7 @@ final class ClipboardStore {
         guard
             let stmt = prepare(
                 """
-                SELECT id, kind, text, image_path, created_at, source_app, pinned_at
+                SELECT id, kind, text, image_path, created_at, source_app, pinned_at, custom_name, representation_types
                 FROM items WHERE kind IN ('image', 'file')
                   AND id NOT IN (SELECT item_id FROM item_text)
                   AND id NOT IN (SELECT item_id FROM item_text_failures
@@ -676,7 +715,9 @@ final class ClipboardStore {
         sqlite3_progress_handler(db, 1000, { _ in Task.isCancelled ? 1 : 0 }, nil)
         let isShort = query.count < 3
         let kind = filter == .image ? "i.kind = 'image'" : filter == .file ? "i.kind = 'file'" : "1"
-        let columns = "i.id, i.kind, i.text, i.image_path, i.created_at, i.source_app, i.pinned_at"
+        let columns =
+            "i.id, i.kind, i.text, i.image_path, i.created_at, i.source_app, i.pinned_at, "
+            + "i.custom_name, i.representation_types"
         let sql =
             isShort
             ? """
@@ -714,7 +755,7 @@ final class ClipboardStore {
             guard let item = row(stmt) else { continue }
             if let residentIDs, !residentIDs.contains(item.id) { continue }
             if isShort || item.isPinned,
-                columnString(stmt, 7)?.localizedCaseInsensitiveContains(query) != true
+                columnString(stmt, 9)?.localizedCaseInsensitiveContains(query) != true
             {
                 continue
             }
@@ -834,6 +875,16 @@ final class ClipboardStore {
         } else {
             sqlite3_bind_null(stmt, 7)
         }
+        if let name = item.customName {
+            sqlite3_bind_text(stmt, 8, name, -1, SQLITE_TRANSIENT)
+        } else {
+            sqlite3_bind_null(stmt, 8)
+        }
+        let types =
+            (try? JSONEncoder().encode(item.representationTypes)).flatMap {
+                String(data: $0, encoding: .utf8)
+            } ?? "[]"
+        sqlite3_bind_text(stmt, 9, types, -1, SQLITE_TRANSIENT)
         sqlite3_step(stmt)
         sqlite3_reset(stmt)
         sqlite3_clear_bindings(stmt)
@@ -892,13 +943,14 @@ final class ClipboardStore {
                 == SQLITE_OK,
             sqlite3_exec(db, "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;", nil, nil, nil)
                 == SQLITE_OK,
+            migrateDatabase(),
             sqlite3_exec(db, Self.schema, nil, nil, nil) == SQLITE_OK
         else { return false }
         insertStmt = prepare(Self.insertSQL)
         // Two indexed branches, deliberately not one OR. See docs/features/clipboard.md#store.
         loadStmt = prepare(
             """
-            SELECT id, kind, text, image_path, created_at, source_app, pinned_at FROM (
+            SELECT id, kind, text, image_path, created_at, source_app, pinned_at, custom_name, representation_types FROM (
               SELECT rowid AS rid, * FROM items WHERE rowid >= ?1
               UNION ALL
               SELECT rowid AS rid, * FROM items WHERE pinned_at IS NOT NULL AND rowid < ?1
@@ -908,7 +960,8 @@ final class ClipboardStore {
             "SELECT rowid FROM items WHERE pinned_at IS NULL ORDER BY rowid DESC LIMIT 1 OFFSET ?")
         searchStmt = prepare(
             """
-            SELECT i.id, i.kind, i.text, i.image_path, i.created_at, i.source_app, i.pinned_at
+            SELECT i.id, i.kind, i.text, i.image_path, i.created_at, i.source_app, i.pinned_at,
+              i.custom_name, i.representation_types
             FROM (
               SELECT rowid FROM items_fts WHERE items_fts MATCH ?
               ORDER BY rowid DESC LIMIT \(Self.searchLimit)
@@ -927,6 +980,148 @@ final class ClipboardStore {
             && deleteByIDStmt != nil && pinStmt != nil && staleImagesStmt != nil
             && deleteStaleStmt != nil
     }
+
+    private func migrateDatabase() -> Bool {
+        guard let stmt = prepare("PRAGMA table_info(items)") else { return false }
+        var columns: Set<String> = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let column = Self.columnString(stmt, 1) { columns.insert(column) }
+        }
+        sqlite3_finalize(stmt)
+        guard !columns.isEmpty, !columns.contains("custom_name") else { return true }
+        let migration = """
+            BEGIN IMMEDIATE;
+            ALTER TABLE items ADD COLUMN custom_name TEXT;
+            ALTER TABLE items ADD COLUMN representation_types TEXT NOT NULL DEFAULT '[]';
+            DROP TRIGGER IF EXISTS items_ai;
+            DROP TRIGGER IF EXISTS items_ad;
+            DROP TRIGGER IF EXISTS items_au;
+            DROP TABLE IF EXISTS items_fts;
+            \(Self.schema)
+            INSERT INTO items_fts(items_fts) VALUES('rebuild');
+            COMMIT;
+            """
+        guard sqlite3_exec(db, migration, nil, nil, nil) == SQLITE_OK else {
+            sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+            return false
+        }
+        return true
+    }
+
+    func item(withID id: UUID) -> ClipboardItem? {
+        guard
+            let stmt = prepare(
+                """
+                SELECT id, kind, text, image_path, created_at, source_app, pinned_at,
+                  custom_name, representation_types FROM items WHERE id = ?
+                """)
+        else { return items.first { $0.id == id } }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
+        return sqlite3_step(stmt) == SQLITE_ROW ? Self.row(stmt) : nil
+    }
+
+    func sequenceIDs() -> [UUID] {
+        guard let stmt = prepare("SELECT id FROM items ORDER BY created_at DESC, rowid DESC") else {
+            return items.sorted { $0.createdAt > $1.createdAt }.map(\.id)
+        }
+        defer { sqlite3_finalize(stmt) }
+        var ids: [UUID] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let value = Self.columnString(stmt, 0), let id = UUID(uuidString: value) { ids.append(id) }
+        }
+        return ids
+    }
+
+    @discardableResult
+    func rename(_ item: ClipboardItem, to name: String) -> Bool {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard name.utf8.count <= 1024 else { return false }
+        return update(item, column: "custom_name", value: name.isEmpty ? nil : name)
+    }
+
+    @discardableResult
+    func editContent(_ item: ClipboardItem, to text: String) -> Bool {
+        guard item.kind == .text, text.count <= 32_000,
+            sqlite3_exec(db, "BEGIN IMMEDIATE", nil, nil, nil) == SQLITE_OK
+        else { return false }
+        defer { sqlite3_exec(db, "COMMIT", nil, nil, nil) }
+        representationRevisions[item.id] = UUID()
+        guard
+            let stmt = prepare(
+                """
+                UPDATE items SET text = ?1, representation_types = '[]' WHERE id = ?2 AND kind = 'text'
+                """)
+        else { return false }
+        sqlite3_bind_text(stmt, 1, text, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, item.id.uuidString, -1, SQLITE_TRANSIENT)
+        let saved = sqlite3_step(stmt) == SQLITE_DONE && sqlite3_changes(db) > 0
+        sqlite3_finalize(stmt)
+        guard saved else { return false }
+        if let stmt = prepare("DELETE FROM item_representations WHERE item_id = ?") {
+            sqlite3_bind_text(stmt, 1, item.id.uuidString, -1, SQLITE_TRANSIENT)
+            sqlite3_step(stmt)
+            sqlite3_finalize(stmt)
+        }
+        if let updated = self.item(withID: item.id), let index = items.firstIndex(where: { $0.id == item.id })
+        {
+            items[index] = updated
+        }
+        representationRevisions.removeValue(forKey: item.id)
+        invalidateSearch()
+        searchRevision += 1
+        return true
+    }
+
+    private func update(_ item: ClipboardItem, column: String, value: String?) -> Bool {
+        guard let stmt = prepare("UPDATE items SET \(column) = ?1 WHERE id = ?2") else { return false }
+        if let value {
+            sqlite3_bind_text(stmt, 1, value, -1, SQLITE_TRANSIENT)
+        } else {
+            sqlite3_bind_null(stmt, 1)
+        }
+        sqlite3_bind_text(stmt, 2, item.id.uuidString, -1, SQLITE_TRANSIENT)
+        let saved = sqlite3_step(stmt) == SQLITE_DONE && sqlite3_changes(db) > 0
+        sqlite3_finalize(stmt)
+        if saved, let updated = self.item(withID: item.id) {
+            if let index = items.firstIndex(where: { $0.id == item.id }) { items[index] = updated }
+            invalidateSearch()
+            searchRevision += 1
+        }
+        return saved
+    }
+
+    func captureRepresentations(_ representations: [ClipboardRepresentation], for item: ClipboardItem) {
+        let representations = ClipboardRepresentation.bounded(representations)
+        let size = representations.reduce(0) { $0 + $1.data.count }
+        guard pendingRepresentationBytes + size <= 2 * 1024 * 1024 else { return }
+        pendingRepresentationBytes += size
+        let previous = representationTask
+        let url = dbURL
+        let revision = UUID()
+        representationRevisions[item.id] = revision
+        representationTask = Task { [weak self] in
+            await previous?.value
+            guard let self else { return }
+            defer { pendingRepresentationBytes -= size }
+            guard !Task.isCancelled, representationRevisions[item.id] == revision else { return }
+            let types = await Task.detached(priority: .utility) {
+                ClipboardRepresentationStore.write(
+                    representations, for: item.id, inDatabaseAt: url, matchingText: item.text)
+            }.value
+            guard !Task.isCancelled, representationRevisions[item.id] == revision else {
+                await Task.detached(priority: .utility) {
+                    _ = ClipboardRepresentationStore.write([], for: item.id, inDatabaseAt: url)
+                }.value
+                return
+            }
+            let json = (try? JSONEncoder().encode(types)) ?? Data("[]".utf8)
+            _ = update(item, column: "representation_types", value: String(data: json, encoding: .utf8))
+            representationRevisions.removeValue(forKey: item.id)
+        }
+    }
+
+    func flushRepresentations() async { await representationTask?.value }
 
     private func prepare(_ sql: String) -> OpaquePointer? {
         var stmt: OpaquePointer?
@@ -955,7 +1150,8 @@ final class ClipboardStore {
     /// which is what makes `owns` true and lets retention reclaim it later.
     nonisolated static func importStoredItems(
         inDatabaseAt url: URL, adoptingImagesInto imagesDirectory: URL? = nil,
-        _ items: some Sequence<ClipboardItem>
+        _ items: some Sequence<ClipboardItem>,
+        representations: (ClipboardItem) -> [ClipboardRepresentation] = { _ in [] }
     ) -> Int {
         var keys: Set<Int> = []
         forEachStoredItem(inDatabaseAt: url) { keys.insert(importKey($0)) }
@@ -985,7 +1181,13 @@ final class ClipboardStore {
                 continue
             }
             bindAndInsert(stmt, item)
-            inserted += 1
+            if sqlite3_changes(db) > 0 {
+                let original = representations(staged)
+                if !original.isEmpty {
+                    _ = ClipboardRepresentationStore.write(original, for: item.id, in: db)
+                }
+                inserted += 1
+            }
         }
         sqlite3_exec(db, "COMMIT", nil, nil, nil)
         return inserted
@@ -1010,7 +1212,8 @@ final class ClipboardStore {
         return ClipboardItem(
             id: item.id, kind: .image, text: nil,
             imagePath: directory.appendingPathComponent(name).path, createdAt: item.createdAt,
-            sourceBundleID: item.sourceBundleID, pinnedAt: item.pinnedAt)
+            sourceBundleID: item.sourceBundleID, pinnedAt: item.pinnedAt,
+            customName: item.customName, representationTypes: item.representationTypes)
     }
 
     /// false leaves the row out, so none ever points into a staging tree about to be discarded.
@@ -1034,7 +1237,7 @@ final class ClipboardStore {
         defer { sqlite3_close_v2(db) }
         var stmt: OpaquePointer?
         let sql = """
-            SELECT id, kind, text, image_path, created_at, source_app, pinned_at
+            SELECT id, kind, text, image_path, created_at, source_app, pinned_at, custom_name, representation_types
             FROM items ORDER BY rowid
             """
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
@@ -1052,7 +1255,11 @@ final class ClipboardStore {
         return ClipboardItem(
             id: id, kind: kind, text: columnString(stmt, 2), imagePath: columnString(stmt, 3),
             createdAt: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 4)),
-            sourceBundleID: columnString(stmt, 5), pinnedAt: columnDate(stmt, 6))
+            sourceBundleID: columnString(stmt, 5), pinnedAt: columnDate(stmt, 6),
+            customName: columnString(stmt, 7),
+            representationTypes: (columnString(stmt, 8).flatMap {
+                try? JSONDecoder().decode([String].self, from: Data($0.utf8))
+            }) ?? [])
     }
 
     nonisolated private static func columnDate(_ stmt: OpaquePointer?, _ index: Int32) -> Date? {
