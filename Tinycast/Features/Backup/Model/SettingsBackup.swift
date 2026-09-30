@@ -74,6 +74,11 @@ struct SettingsBackup: Codable {
         // Carried like quicklinks: running a shortcut the user built grants no permission class.
         var appleShortcutsEnabled: Bool?
         // `calendarEnabled` is absent: an import must not grant calendar access.
+        var contactsShowInLauncher: Bool?
+        var contactsShowPhotos: Bool?
+        var contactsSearchPhones: Bool?
+        var contactsSearchEmails: Bool?
+        var contactsSearchOrganizations: Bool?
         var calendarShowInLauncher: Bool?
         var calendarLauncherLimit: Int?
         // Carried: it narrows what is read rather than widening what may be reached.
@@ -178,6 +183,11 @@ extension SettingsBackup {
             quicklinkSelectionFallback: s.quicklinkSelectionFallback.rawValue,
             quicklinkConfirmsBeforeDelete: s.quicklinkConfirmsBeforeDelete,
             appleShortcutsEnabled: s.appleShortcutsEnabled,
+            contactsShowInLauncher: s.contactsShowInLauncher,
+            contactsShowPhotos: s.contactsShowPhotos,
+            contactsSearchPhones: s.contactsSearchPhones,
+            contactsSearchEmails: s.contactsSearchEmails,
+            contactsSearchOrganizations: s.contactsSearchOrganizations,
             calendarShowInLauncher: s.calendarShowInLauncher,
             calendarLauncherLimit: s.calendarLauncherLimit.rawValue,
             calendarIncludesTomorrow: s.calendarIncludesTomorrow,
@@ -490,6 +500,26 @@ extension SettingsBackup {
         }
         if let flag = s.quicklinkConfirmsBeforeDelete {
             settings.quicklinkConfirmsBeforeDelete = flag
+            count += 1
+        }
+        if let flag = s.contactsShowInLauncher {
+            settings.contactsShowInLauncher = flag
+            count += 1
+        }
+        if let flag = s.contactsShowPhotos {
+            settings.contactsShowPhotos = flag
+            count += 1
+        }
+        if let flag = s.contactsSearchPhones {
+            settings.contactsSearchPhones = flag
+            count += 1
+        }
+        if let flag = s.contactsSearchEmails {
+            settings.contactsSearchEmails = flag
+            count += 1
+        }
+        if let flag = s.contactsSearchOrganizations {
+            settings.contactsSearchOrganizations = flag
             count += 1
         }
         if let flag = s.calendarShowInLauncher {

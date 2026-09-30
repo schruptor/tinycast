@@ -13,6 +13,8 @@
 	<!-- Undeclared, tccd refuses the prompt outright: no dialog, and the request resolves as denied. -->
 	<key>com.apple.security.device.camera</key>
 	<true/>
+	<key>com.apple.security.personal-information.addressbook</key>
+	<true/>
 	<key>com.apple.security.personal-information.calendars</key>
 	<true/>
 </dict>

@@ -51,6 +51,11 @@ enum SettingsBackupCoverage {
         "quicklinkConfirmsBeforeDelete": .quicklinkConfirmsBeforeDelete,
         "appleShortcutsEnabled": .appleShortcutsEnabled,
         "extensionsShowInLauncher": .extensionsShowInLauncher,
+        "contactsShowInLauncher": .contactsShowInLauncher,
+        "contactsShowPhotos": .contactsShowPhotos,
+        "contactsSearchPhones": .contactsSearchPhones,
+        "contactsSearchEmails": .contactsSearchEmails,
+        "contactsSearchOrganizations": .contactsSearchOrganizations,
         "calendarShowInLauncher": .calendarShowInLauncher,
         "calendarLauncherLimit": .calendarLauncherLimit,
         "calendarIncludesTomorrow": .calendarIncludesTomorrow,
@@ -92,6 +97,8 @@ enum SettingsBackupCoverage {
             "Names a keyboard input source installed on this Mac; another Mac may not have it.",
         AppSettingsKey.meetingBrowser.rawValue:
             "Names a browser installed on this Mac; another Mac may not have it.",
+        AppSettingsKey.contactsEnabled.rawValue:
+            "Consent to read contacts stays local; importing settings must not enable Contacts.",
         AppSettingsKey.calendarEnabled.rawValue:
             "Doubles as consent to read your calendar; an import must not grant calendar access.",
         AppSettingsKey.autoJoinMeetings.rawValue:

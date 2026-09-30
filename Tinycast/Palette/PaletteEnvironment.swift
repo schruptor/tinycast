@@ -37,6 +37,7 @@ extension View {
             .environment(core.quicklinks)
             .environment(core.snippetsStore)
             .environment(core.extensions)
+            .environment(core.contactsCoordinator)
             .environment(core.calendarStore)
             .environment(core.meetingClock)
     }

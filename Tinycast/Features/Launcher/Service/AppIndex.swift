@@ -16,6 +16,7 @@ struct AppEntry: Identifiable, Hashable, Sendable {
         case appleShortcut
         case extensionCommand
         case meeting
+        case contact
 
         var descriptor: KindDescriptor {
             switch self {
@@ -86,6 +87,11 @@ struct AppEntry: Identifiable, Hashable, Sendable {
                     label: "Extension", sectionTitle: "Extensions",
                     openVerb: "Run Command", canHideFromSearch: true,
                     canRevealInFinder: false, canDragOut: false, isSymbolIcon: true, rankPriority: 3)
+            case .contact:
+                return KindDescriptor(
+                    label: "Contact", sectionTitle: "Contacts", openVerb: "Open in Contacts",
+                    canHideFromSearch: false, canRevealInFinder: false, canDragOut: false,
+                    isSymbolIcon: true, rankPriority: 1)
             case .meeting:
                 return KindDescriptor(
                     label: "Meeting", sectionTitle: "Meetings",
@@ -117,6 +123,7 @@ struct AppEntry: Identifiable, Hashable, Sendable {
     let kind: Kind
     /// Set when a feature pane, not this entry's category pane, lists its controls and gates it.
     var settingsOwner: SettingsTab?
+    var contact: ContactEntry?
     /// Secondary label beside the name, for an entry whose name alone can't say what it acts on.
     var subtitle: String?
     /// Background-refresh dot for a scheduled extension command; nil everywhere else.
@@ -198,7 +205,7 @@ struct AppEntry: Identifiable, Hashable, Sendable {
             return AppleShortcut.id(fromEntryID: id).map { .appleShortcut(id: $0) }
         case .snippet:
             return StoredSnippet.id(fromEntryID: id).map { .snippet(id: $0) }
-        case .extensionCommand, .meeting:
+        case .extensionCommand, .meeting, .contact:
             return nil
         }
     }
@@ -233,6 +240,7 @@ struct AppEntry: Identifiable, Hashable, Sendable {
                 ?? CustomWindowSize.sfSymbol
         case .windowLayout: return WindowLayout.sfSymbol
         case .windowRoom: return Room.sfSymbol
+        case .contact: return "person.crop.circle"
         case .meeting: return "video.fill"
         case .application, .systemSettings, .appleShortcut, .extensionCommand: return "questionmark"
         }
@@ -324,6 +332,7 @@ extension AppEntry.Kind {
 final class AppIndex {
     private(set) var apps: [AppEntry] = []
 
+    private var contactEntries: [AppEntry] = []
     private var snippetEntries: [AppEntry] = []
 
     /// The launcher's rows in order, with the size of each pinned section at their head.
@@ -476,6 +485,12 @@ final class AppIndex {
     func setAppleShortcuts(_ entries: [AppEntry]) {
         guard entries != appleShortcutEntries else { return }
         appleShortcutEntries = entries
+        publishEntries()
+    }
+
+    func setContacts(_ entries: [AppEntry]) {
+        guard entries != contactEntries else { return }
+        contactEntries = entries
         publishEntries()
     }
 
@@ -654,7 +669,7 @@ final class AppIndex {
     private func publishEntries() {
         // Each slice arrives in its own display order; the slice order is the section order.
         let updated =
-            Self.named(meetingEntries) + discoveredEntries
+            Self.named(meetingEntries) + discoveredEntries + contactEntries
             + Self.named(
                 extensionEntries + quicklinkEntries + appleShortcutEntries + snippetEntries
                     + Self.systemActionEntries + windowLayoutEntries + windowRoomEntries
@@ -662,6 +677,8 @@ final class AppIndex {
                     + customWindowSizeEntries + customCommandEntries + quickActionEntries
                     + commandEntries)
         guard updated != apps else { return }
+        matchMemo = Memo()
+        resultsMemo = Memo()
         apps = updated
         entriesRevision &+= 1
     }
@@ -719,12 +736,21 @@ final class AppIndex {
     }
 
     private func rank(_ q: String, limit: Int) -> [AppEntry] {
-        Signposts.interval("AppIndex.rank") {
-            let usage = ranking.snapshot()
-            return LauncherOrder.ranked(
-                apps, query: LauncherOrder.Query(q), sensitivity: sensitivity, limit: limit,
-                profile: \.search, signals: { self.signals(for: $0, usage: usage) })
+        Signposts.interval("AppIndex.rank") { ordered(apps, query: q, limit: limit) }
+    }
+
+    func ordered(_ entries: [AppEntry], query: String, limit: Int = 200) -> [AppEntry] {
+        let usage = ranking.snapshot()
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if q.isEmpty {
+            return LauncherOrder.byUsage(entries, signals: { self.signals(for: $0, usage: usage) })
         }
+        let normalized = ContactEntry.searchQuery(q)
+        let phoneQuery = normalized == q ? nil : LauncherOrder.Query(normalized)
+        return LauncherOrder.ranked(
+            entries, query: LauncherOrder.Query(q), sensitivity: sensitivity, limit: limit,
+            queryForItem: { $0.kind == .contact ? phoneQuery : nil },
+            profile: \.search, signals: { self.signals(for: $0, usage: usage) })
     }
 
     /// Each kind's run sorted by usage; the runs keep publication order, which is section order.

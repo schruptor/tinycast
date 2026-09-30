@@ -110,7 +110,7 @@ enum SettingsSearchCatalog {
     static let entries: [SettingsSearchEntry] =
         general + applications + systemSettings + systemActions + commands + quicklinks
         + appleShortcuts + fallbacks + clipboard + snippets + fileSearch + windowManagement
-        + navigation + notes + calendar + emoji + ai + quickActions + extensions + permissions
+        + navigation + notes + contacts + calendar + emoji + ai + quickActions + extensions + permissions
         + backup + about
 
     private static let general: [SettingsSearchEntry] = [
@@ -495,6 +495,17 @@ enum SettingsSearchCatalog {
         .init(
             .emojiAppearance, "Column Count",
             keywords: ["columns", "density", "zoom", "six", "eight", "ten"])
+    ]
+
+    private static let contacts: [SettingsSearchEntry] = [
+        .init(pane: .contacts, keywords: ["address book", "people", "email", "phone"]),
+        .init(.contactsContacts, "Enable Contacts"),
+        .init(group: .contactsContacts, "Show contacts in launcher", keywords: ["root search"]),
+        .init(.contactsSearch, "Search phone numbers"),
+        .init(.contactsSearch, "Search email addresses"),
+        .init(.contactsSearch, "Search organizations"),
+        .init(.contactsAppearance, "Show contact photos"),
+        .init(group: .contactsCommands, "Contacts commands", keywords: ["shortcut", "alias"])
     ]
 
     private static let calendar: [SettingsSearchEntry] = [

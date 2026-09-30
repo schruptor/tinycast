@@ -109,7 +109,7 @@ anything a day old on the next run, since a run killed mid-flight leaves its tre
 
 `settings-backup-test` asserts that every `AppSettingsKey` appears in exactly one table, that no field
 claims a key twice, that every exclusion names a real key and carries a non-empty reason, and that each
-capability-granting key — `snippetsEnabled`, `extensionsEnabled`, `calendarEnabled`,
+capability-granting key — `contactsEnabled`, `snippetsEnabled`, `extensionsEnabled`, `calendarEnabled`,
 `autoJoinMeetings`, `cameraPreview`, `quickActionsEnabled` — is named individually as excluded. The
 duplication between `AppSettings` and this file is the point: it forces a decision about every new
 setting rather than defaulting it into a backup.
@@ -141,3 +141,7 @@ what keeps a second pass from silently failing its inserts. Same reasoning as `Q
 The old flat `Tinycast-Settings-*.json` export is gone rather than deprecated, and nothing reads it.
 
 Raycast import is documented separately in [raycast-import.md](raycast-import.md).
+
+Contacts backups carry only launcher visibility, photo display and optional search-field settings.
+`contactsEnabled` is deliberately excluded from backup and settings.json; importing never enables
+Contacts or requests access. No address-book values or thumbnails are archived.

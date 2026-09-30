@@ -67,7 +67,8 @@ final class LauncherCoordinator {
     ) {
         // A category word is no search for the row: learning it would rank the row under "s".
         if !CommandCatalog.isQueryDriven(app) {
-            let term = searchQuery.flatMap { AppEntry.Kind.named(by: $0) == nil ? $0 : nil }
+            let term = app.kind == .contact ? nil
+                : searchQuery.flatMap { AppEntry.Kind.named(by: $0) == nil ? $0 : nil }
             ranking.visit(itemKey: app.preferenceKey, query: term)
         }
         // Commands dispatch before the palette hides: mode-switching commands keep it open.
@@ -127,6 +128,10 @@ final class LauncherCoordinator {
             extensionCoordinator.runExtensionCommand(app, arguments: arguments)
             return
         }
+        if app.kind == .contact {
+            core.contactsCoordinator.open(app, recordVisit: false)
+            return
+        }
         if app.kind == .meeting {
             guard let id = MeetingEvent.id(fromEntryID: app.id) else { return }
             calendarCoordinator.activateMeeting(id: id)
@@ -155,7 +160,7 @@ final class LauncherCoordinator {
             guard let snippetID = StoredSnippet.id(fromEntryID: app.id) else { return }
             snippetCoordinator.expandSnippet(id: snippetID, target: previous)
         case .command, .quickAction, .customCommand, .systemAction, .windowCommand, .windowLayout,
-            .windowRoom, .quicklink, .appleShortcut, .extensionCommand, .meeting:
+            .windowRoom, .quicklink, .appleShortcut, .extensionCommand, .meeting, .contact:
             break  // handled above
         }
     }
@@ -184,6 +189,8 @@ final class LauncherCoordinator {
             core.clipboardCoordinator.pasteNextInSequence()
         case .searchEmoji:
             paletteCoordinator.togglePalette(mode: .emoji)
+        case .searchContacts:
+            core.contactsCoordinator.show()
         case .searchFiles:
             fileSearchCoordinator.show()
         case .searchMenuItems:

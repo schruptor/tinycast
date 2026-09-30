@@ -413,7 +413,30 @@ final class AppSettings {
         }
     }
 
-    /// Doubles as calendar-access consent, so only `CalendarCoordinator` may write it.
+    var contactsEnabled: Bool {
+        didSet { defaults.set(contactsEnabled, forKey: Key.contactsEnabled.rawValue) }
+    }
+
+    var contactsShowInLauncher: Bool {
+        didSet { defaults.set(contactsShowInLauncher, forKey: Key.contactsShowInLauncher.rawValue) }
+    }
+
+    var contactsShowPhotos: Bool {
+        didSet { defaults.set(contactsShowPhotos, forKey: Key.contactsShowPhotos.rawValue) }
+    }
+
+    var contactsSearchPhones: Bool {
+        didSet { defaults.set(contactsSearchPhones, forKey: Key.contactsSearchPhones.rawValue) }
+    }
+
+    var contactsSearchEmails: Bool {
+        didSet { defaults.set(contactsSearchEmails, forKey: Key.contactsSearchEmails.rawValue) }
+    }
+
+    var contactsSearchOrganizations: Bool {
+        didSet { defaults.set(contactsSearchOrganizations, forKey: Key.contactsSearchOrganizations.rawValue) }
+    }
+
     var calendarEnabled: Bool {
         didSet { defaults.set(calendarEnabled, forKey: Key.calendarEnabled.rawValue) }
     }
@@ -701,6 +724,17 @@ final class AppSettings {
         extensionCustomSearchPaths =
             defaults.stringArray(forKey: Key.extensionCustomSearchPaths.rawValue) ?? []
         // Opt-in, like extensions: until it is asked for, EventKit is never loaded.
+        contactsEnabled = defaults.bool(forKey: Key.contactsEnabled.rawValue)
+        contactsShowInLauncher = defaults.object(forKey: Key.contactsShowInLauncher.rawValue) == nil
+            || defaults.bool(forKey: Key.contactsShowInLauncher.rawValue)
+        contactsShowPhotos = defaults.object(forKey: Key.contactsShowPhotos.rawValue) == nil
+            || defaults.bool(forKey: Key.contactsShowPhotos.rawValue)
+        contactsSearchPhones = defaults.object(forKey: Key.contactsSearchPhones.rawValue) == nil
+            || defaults.bool(forKey: Key.contactsSearchPhones.rawValue)
+        contactsSearchEmails = defaults.object(forKey: Key.contactsSearchEmails.rawValue) == nil
+            || defaults.bool(forKey: Key.contactsSearchEmails.rawValue)
+        contactsSearchOrganizations = defaults.object(forKey: Key.contactsSearchOrganizations.rawValue) == nil
+            || defaults.bool(forKey: Key.contactsSearchOrganizations.rawValue)
         calendarEnabled = defaults.bool(forKey: Key.calendarEnabled.rawValue)
         calendarShowInLauncher =
             defaults.object(forKey: Key.calendarShowInLauncher.rawValue) == nil

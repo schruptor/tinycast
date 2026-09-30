@@ -43,6 +43,7 @@ final class AppCore {
     let calcHistory = CalculatorHistoryStore()
     let currencyRates = CurrencyRateStore()
     let regionNumberFormat = RegionNumberFormatMonitor()
+    let contactsStore = ContactsStore()
     let calendarStore = CalendarStore()
     let meetingClock = MeetingClock()
     let updateChecker = UpdateCheckStore()
@@ -179,6 +180,10 @@ final class AppCore {
         paletteCoordinator: paletteCoordinator)
     @ObservationIgnored private(set) lazy var calculatorCoordinator = CalculatorCoordinator(
         calcHistory: calcHistory, paletteCoordinator: paletteCoordinator, core: self)
+    @ObservationIgnored private(set) lazy var contactsCoordinator = ContactsCoordinator(
+        store: contactsStore, index: appIndex, settings: settings, ranking: launcherRanking,
+        palette: paletteCoordinator, core: self)
+
     @ObservationIgnored private(set) lazy var calendarCoordinator = CalendarCoordinator(
         store: calendarStore, clock: meetingClock, appIndex: appIndex, settings: settings,
         paletteCoordinator: paletteCoordinator, core: self)
@@ -309,9 +314,11 @@ final class AppCore {
             appleShortcutCoordinator.applyPresence()
             paletteCoordinator.onLauncherShown = { [weak self] in
                 self?.appleShortcutCoordinator.refresh()
+                self?.contactsCoordinator.prepare()
             }
             paletteCoordinator.onScreenOpening = { [weak self] mode in
                 switch mode {
+                case .contacts: self?.contactsCoordinator.prepare()
                 case .menuSearch: self?.menuSearchCoordinator.load()
                 case .switchWindows: self?.windowSwitchCoordinator.load()
                 case .rooms, .roomWindows: self?.roomCoordinator.load()
@@ -319,6 +326,7 @@ final class AppCore {
                 }
             }
             updateCoordinator.applyEnabled()
+            contactsCoordinator.applyEnabled()
             calendarCoordinator.applyEnabled()
             Task { await appIndex.refresh() }
             Task { await emojiIndex.load() }
@@ -640,6 +648,15 @@ final class AppCore {
         track(
             { _ = $0.quickActionsEnabled },
             reproject: { $0.quickActionCoordinator.applyEnabled() })
+        track({ _ = $0.contactsEnabled }, reproject: { $0.contactsCoordinator.applyEnabled() })
+        track({ _ = $0.contactsShowPhotos }, reproject: { $0.contactsCoordinator.applyPhotos() })
+        track({ _ = $0.contactsShowInLauncher }, reproject: { $0.contactsCoordinator.publishEntries() })
+        track(
+            {
+                _ = $0.contactsSearchPhones
+                _ = $0.contactsSearchEmails
+                _ = $0.contactsSearchOrganizations
+            }, reproject: { $0.contactsCoordinator.reloadOptions() })
         track({ _ = $0.calendarEnabled }, reproject: { $0.calendarCoordinator.applyEnabled() })
         track(
             {

@@ -149,3 +149,10 @@ recorder's rule holds: a chord needs ⌘, ⌥, ⌃ or fn unless its key is an F-
 4. Run its side effect from a `track` sink in `AppCore`.
 
 A consent flag, content or machine state gets no key.
+
+### Contacts
+
+`contacts.showInLauncher`, `contacts.showPhotos`, `contacts.searchPhones`, `contacts.searchEmails`
+and `contacts.searchOrganizations` mirror display/search preferences. There is no `contacts.enabled`
+key: enabling address-book access requires an explicit gesture in Tinycast. No contact content or
+thumbnail enters the settings file.

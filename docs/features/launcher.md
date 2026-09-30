@@ -785,3 +785,15 @@ The ⌘K menu samples `isRunning` **once, when it opens** (`RootPaletteView.open
 launching or quitting elsewhere can't add or drop those two rows while the menu is up — the same freeze
 the rest of the menu already has ([palette.md](palette.md)). Only `LauncherList` observes
 `RunningAppsMonitor` live, for the running dot.
+
+## Contacts
+
+The opt-in Contacts slice arrives after System Settings and before Extensions, already named off-main.
+`AppEntry.Kind.contact` supplies its section, symbol, default action and priority (1). Its optional
+`contact` value supplies native contact actions and a lazy thumbnail; it never uses ID category guesses.
+`Search Contacts` belongs to Settings › Contacts, independently of the Commands category switch.
+
+The dedicated screen uses `AppIndex.ordered`, the same `LauncherOrder` comparator, aliases, sensitivity
+and ranking signals as root search. Phone-only queries strip formatting before comparison; mixed text
+queries keep the normal launcher fold. Contact visits record IDs and frecency only, without storing
+queries that could contain an email, phone number or full name. See [contacts.md](contacts.md).

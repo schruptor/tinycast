@@ -84,6 +84,9 @@ struct RootPaletteView: View {
         case .roomWindows:
             return RoomPickerScreen(
                 coordinator: core.roomCoordinator, session: core.roomSession, vm: vm)
+        case .contacts:
+            return ContactSearchScreen(
+                coordinator: core.contactsCoordinator, vm: vm, openActions: openActions)
         case .schedule:
             return ScheduleScreen(
                 store: calendarStore, clock: meetingClock, core: core, vm: vm,

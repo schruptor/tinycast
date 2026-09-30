@@ -704,3 +704,9 @@ tccutil reset Accessibility com.tinycast.app.dev 2>/dev/null || true
 - Quit and relaunch: everything created above persisted
 - Nothing was written outside `com.tinycast.app.dev/`. Channel isolation is not negotiable — a Dev build
   writing into the stable app's directory is a defect even though the data is disposable
+
+### Contacts
+
+The Contacts harnesses are `contacts-test` (native value policy, shared matching/ranking and actions)
+and `contacts-store-test` (native formatting and injected lifecycle). The signed-app permission,
+change-observation and action sweep is in [features/contacts.md](features/contacts.md#tests).

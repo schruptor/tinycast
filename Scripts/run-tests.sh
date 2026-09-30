@@ -132,6 +132,15 @@ run index file-search-performance Tinycast/Platform/Signposts.swift \
                            $L/SearchRelevance.swift \
                            Tinycast/Features/FileSearch/Model/*.swift \
                            Tinycast/Features/FileSearch/Service/FileSearchService.swift
+run contacts-store-test    Tinycast/Features/Contacts/Model/*.swift \
+                           Tinycast/Features/Contacts/Service/*.swift \
+                           Tinycast/Platform/NotificationToken.swift \
+                           $L/SearchRelevance.swift $L/ScriptRomanization.swift \
+                           $L/LauncherMatch.swift $L/EntryNaming.swift
+run -O contacts-test          Tinycast/Features/Contacts/Model/*.swift \
+                           $L/SearchRelevance.swift $L/ScriptRomanization.swift \
+                           $L/LauncherMatch.swift $L/EntryNaming.swift $L/LauncherOrder.swift \
+                           $L/LauncherRankingStore.swift
 run ranking-test           $L/SearchRelevance.swift $L/ScriptRomanization.swift \
                            $L/LauncherMatch.swift $L/LauncherRankingStore.swift
 run scopes-test            $L/SearchScopes.swift

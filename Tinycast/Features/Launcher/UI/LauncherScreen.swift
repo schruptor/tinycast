@@ -229,6 +229,9 @@ struct LauncherScreen: PaletteScreen {
         case .meeting(let meeting):
             return MeetingActionsMenu.content(meeting: meeting, core: core)
         case .entry(let app):
+            if app.kind == .contact {
+                return core.contactsCoordinator.actions(for: app)
+            }
             return AppActionsMenu.content(
                 app: app, searchQuery: vm.query, core: core, running: running,
                 favorites: favoriteActions(for: app, at: selection),
@@ -264,7 +267,9 @@ struct LauncherScreen: PaletteScreen {
 
     /// ⌘↵ — only an entry backed by a file on disk has somewhere to be revealed.
     func secondary(at selection: Int) -> Bool {
-        guard let app = entry(at: selection), app.canRevealInFinder else { return false }
+        guard let app = entry(at: selection) else { return false }
+        if app.kind == .contact { core.contactsCoordinator.open(app); return true }
+        guard app.canRevealInFinder else { return false }
         core.launcherCoordinator.showInFinder(app)
         return true
     }
@@ -278,6 +283,8 @@ struct LauncherScreen: PaletteScreen {
     }
 
     func perform(_ shortcut: PaletteShortcut, at selection: Int) -> Bool {
+        if let app = entry(at: selection), app.kind == .contact,
+            core.contactsCoordinator.perform(shortcut, entry: app) { return true }
         switch shortcut {
         case .toggleFavorite: return toggleFavorite(at: selection)
         case .hideFromSearch: return hideFromSearch(at: selection)

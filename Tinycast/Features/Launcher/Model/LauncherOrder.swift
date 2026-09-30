@@ -32,6 +32,7 @@ enum LauncherOrder {
 
     static func ranked<Item>(
         _ items: [Item], query: Query, sensitivity: SearchSensitivity, limit: Int,
+        queryForItem: ((Item) -> Query?)? = nil,
         profile: (Item) -> SearchProfile, signals: (Item) -> Signals
     ) -> [Item] {
         guard !query.isEmpty else { return [] }
@@ -39,7 +40,7 @@ enum LauncherOrder {
             let signals = signals(item)
             guard
                 let facts = Facts(
-                    profile: profile(item), signals: signals, query: query, sensitivity: sensitivity)
+                    profile: profile(item), signals: signals, query: queryForItem?(item) ?? query, sensitivity: sensitivity)
             else { return nil }
             return (item, Candidate(facts: facts, signals: signals, position: position))
         }

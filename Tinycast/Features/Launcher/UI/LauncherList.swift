@@ -113,7 +113,7 @@ struct LauncherList: View {
         }
         // Publication order, so rows match the flat index.
         let kinds: [AppEntry.Kind] = [
-            .meeting, .application, .systemSettings, .extensionCommand, .quicklink, .appleShortcut,
+            .meeting, .application, .systemSettings, .contact, .extensionCommand, .quicklink, .appleShortcut,
             .snippet, .systemAction, .windowLayout, .windowRoom, .windowCommand, .customCommand,
             .quickAction, .command
         ]
@@ -251,7 +251,13 @@ private struct AppRow: View {
 
     var body: some View {
         HStack(spacing: metrics.spacing.lg) {
-            AppIconView(app: app, pointSize: metrics.size.resultRowIcon)
+            Group {
+                if let contact = app.contact {
+                    ContactAvatar(contact: contact)
+                } else {
+                    AppIconView(app: app, pointSize: metrics.size.resultRowIcon)
+                }
+            }
                 .frame(width: metrics.size.resultRowIcon, height: metrics.size.resultRowIcon)
                 .overlay(alignment: .bottom) {
                     if running {
@@ -266,14 +272,24 @@ private struct AppRow: View {
                     CalendarBar(color: meeting.calendarColor)
                 }
             }
-            Text(app.name)
-                .font(metrics.typography.rowTitle)
-                .lineLimit(1)
-            if let subtitle = app.subtitle {
-                Text(subtitle)
-                    .font(metrics.typography.rowTrailing)
-                    .foregroundStyle(.secondary)
+            if app.kind == .contact {
+                VStack(alignment: .leading, spacing: metrics.spacing.xxs) {
+                    Text(app.name).font(metrics.typography.rowTitle).lineLimit(1)
+                    if let subtitle = app.subtitle {
+                        Text(subtitle).font(metrics.typography.rowTrailing)
+                            .foregroundStyle(.secondary).lineLimit(1)
+                    }
+                }
+            } else {
+                Text(app.name)
+                    .font(metrics.typography.rowTitle)
                     .lineLimit(1)
+                if let subtitle = app.subtitle {
+                    Text(subtitle)
+                        .font(metrics.typography.rowTrailing)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
             if let alias = aliases.alias(for: app.preferenceKey) {
                 Text(alias)
